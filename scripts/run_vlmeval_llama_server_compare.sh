@@ -10,6 +10,8 @@ VLMEVAL_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/VLMEvalKit"
 WORK_DIR="${ROOT_DIR}/logs/vlmeval_compare_$(date +%Y%m%d_%H%M%S)"
 
 HF_REPO="Qwen/Qwen3-VL-4B-Instruct-GGUF:Q4_K_M"
+MODEL_FILE=""
+MMPROJ_FILE=""
 MODEL_ALIAS="qwen3-vl-local"
 DATASETS="MME,MMStar,HallusionBench,RealWorldQA"
 PRESET=""
@@ -34,6 +36,8 @@ Options:
   --vlmeval-dir PATH         VLMEvalKit checkout dir. Default: $XDG_CACHE_HOME/VLMEvalKit
   --work-dir PATH            Output dir for VLMEvalKit and summary files
   --hf-repo REPO[:QUANT]     HF GGUF repo for both servers
+  --model-file PATH          Local GGUF model file for both servers
+  --mmproj-file PATH         Local mmproj GGUF file for both servers
   --preset NAME              Dataset preset: quick|doc|general|all
   --datasets CSV             Comma-separated datasets. Default: MME,MMStar,HallusionBench,RealWorldQA
   --ctx-size N               llama-server ctx size. Default: 8192
@@ -53,6 +57,7 @@ Notes:
   - doc     : more sensitive to OCR / document / perception changes
   - general : stronger broad VLM comparison
   - all     : union of all supported datasets in this wrapper
+  - If --model-file is provided, the script starts both servers with -m/--mmproj and ignores --hf-repo.
   - If both --preset and --datasets are provided, --datasets wins.
   - Default datasets are chosen to work with exact matching, so no judge API is required.
   - The script starts two local OpenAI-compatible llama-server instances, runs VLMEvalKit once
@@ -80,6 +85,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --hf-repo)
             HF_REPO="$2"
+            shift 2
+            ;;
+        --model-file)
+            MODEL_FILE="$2"
+            shift 2
+            ;;
+        --mmproj-file)
+            MMPROJ_FILE="$2"
             shift 2
             ;;
         --preset)
@@ -146,11 +159,40 @@ MOD_LLAMA_DIR="$(cd "${MOD_LLAMA_DIR}" && pwd)"
 CLEAN_LLAMA_DIR="$(cd "${CLEAN_LLAMA_DIR}" && pwd)"
 VLMEVAL_DIR="${VLMEVAL_DIR/#\~/$HOME}"
 WORK_DIR="${WORK_DIR/#\~/$HOME}"
+MODEL_FILE="${MODEL_FILE/#\~/$HOME}"
+MMPROJ_FILE="${MMPROJ_FILE/#\~/$HOME}"
 WORK_DIR="$(python - <<'PY' "$WORK_DIR"
 import os, sys
 print(os.path.abspath(os.path.expanduser(sys.argv[1])))
 PY
 )"
+if [[ -n "${MODEL_FILE}" ]]; then
+    MODEL_FILE="$(python - <<'PY' "$MODEL_FILE"
+import os, sys
+print(os.path.abspath(os.path.expanduser(sys.argv[1])))
+PY
+)"
+fi
+if [[ -n "${MMPROJ_FILE}" ]]; then
+    MMPROJ_FILE="$(python - <<'PY' "$MMPROJ_FILE"
+import os, sys
+print(os.path.abspath(os.path.expanduser(sys.argv[1])))
+PY
+)"
+fi
+
+if [[ -n "${MODEL_FILE}" && ! -f "${MODEL_FILE}" ]]; then
+    echo "Local model file not found: ${MODEL_FILE}" >&2
+    exit 1
+fi
+if [[ -n "${MMPROJ_FILE}" && ! -f "${MMPROJ_FILE}" ]]; then
+    echo "Local mmproj file not found: ${MMPROJ_FILE}" >&2
+    exit 1
+fi
+if [[ -z "${MODEL_FILE}" && -n "${MMPROJ_FILE}" ]]; then
+    echo "--mmproj-file requires --model-file" >&2
+    exit 2
+fi
 
 if [[ -n "${PRESET}" ]]; then
     case "${PRESET}" in
@@ -263,18 +305,49 @@ start_server() {
     local log_path="$4"
 
     echo "[server] starting ${name} on :${port}"
-    "${bin_path}" \
-        --hf-repo "${HF_REPO}" \
-        --host 127.0.0.1 \
-        --port "${port}" \
-        --alias "${MODEL_ALIAS}" \
-        --api-key "${API_KEY}" \
-        --ctx-size "${CTX_SIZE}" \
-        --gpu-layers "${GPU_LAYERS}" \
-        --jinja \
-        --temp 0 \
-        --no-webui \
-        >"${log_path}" 2>&1 &
+    if [[ -n "${MODEL_FILE}" ]]; then
+        if [[ -n "${MMPROJ_FILE}" ]]; then
+            "${bin_path}" \
+                -m "${MODEL_FILE}" \
+                --mmproj "${MMPROJ_FILE}" \
+                --host 127.0.0.1 \
+                --port "${port}" \
+                --alias "${MODEL_ALIAS}" \
+                --api-key "${API_KEY}" \
+                --ctx-size "${CTX_SIZE}" \
+                --gpu-layers "${GPU_LAYERS}" \
+                --jinja \
+                --temp 0 \
+                --no-webui \
+                >"${log_path}" 2>&1 &
+        else
+            "${bin_path}" \
+                -m "${MODEL_FILE}" \
+                --host 127.0.0.1 \
+                --port "${port}" \
+                --alias "${MODEL_ALIAS}" \
+                --api-key "${API_KEY}" \
+                --ctx-size "${CTX_SIZE}" \
+                --gpu-layers "${GPU_LAYERS}" \
+                --jinja \
+                --temp 0 \
+                --no-webui \
+                >"${log_path}" 2>&1 &
+        fi
+    else
+        "${bin_path}" \
+            --hf-repo "${HF_REPO}" \
+            --host 127.0.0.1 \
+            --port "${port}" \
+            --alias "${MODEL_ALIAS}" \
+            --api-key "${API_KEY}" \
+            --ctx-size "${CTX_SIZE}" \
+            --gpu-layers "${GPU_LAYERS}" \
+            --jinja \
+            --temp 0 \
+            --no-webui \
+            >"${log_path}" 2>&1 &
+    fi
 
     local pid=$!
     if [[ "${name}" == "modified" ]]; then
