@@ -299,6 +299,13 @@ if [[ ( "$model_quant_type" != "none" || $run_all_precisions -eq 1 ) && ! -x "$q
   needs_quantize_bin=1
 fi
 
+log_note() {
+  echo "$*"
+  if [[ -n "$results_file" ]]; then
+    echo "$*" >> "$results_file"
+  fi
+}
+
 if [[ $skip_build -eq 0 ]]; then
   if [[ $rebuild -eq 1 || ! -x "$llama_bin" || $needs_reconfigure -eq 1 || $needs_quantize_bin -eq 1 ]]; then
     cmake_config_cmd=("$cmake_bin" -S "$llama_dir" -B "$build_dir")
@@ -309,7 +316,7 @@ if [[ $skip_build -eq 0 ]]; then
       cmake_config_cmd+=(-DGGML_CUDA=OFF)
     fi
 
-    echo "[build] ${cmake_config_cmd[*]}"
+    log_note "[build] ${cmake_config_cmd[*]}"
     "${cmake_config_cmd[@]}"
     build_targets=(llama-vl-embedding)
     if [[ "$model_quant_type" != "none" || $run_all_precisions -eq 1 ]]; then
@@ -317,7 +324,7 @@ if [[ $skip_build -eq 0 ]]; then
     fi
     "$cmake_bin" --build "$build_dir" --target "${build_targets[@]}" -j
   else
-    echo "[build] reuse existing binary: $llama_bin"
+    log_note "[build] reuse existing binary: $llama_bin"
   fi
 fi
 
@@ -325,10 +332,10 @@ convert_if_needed() {
   local target=$1
   shift
   if [[ $force_convert -eq 1 || ! -f "$target" ]]; then
-    echo "[convert] generating $(basename "$target")"
+    log_note "[convert] generating $(basename "$target")"
     "$python_bin" "$llama_dir/convert_hf_to_gguf.py" "$model_dir" --outfile "$target" "$@"
   else
-    echo "[convert] reuse existing $(basename "$target")"
+    log_note "[convert] reuse existing $(basename "$target")"
   fi
 }
 
@@ -342,10 +349,10 @@ quantize_if_needed() {
       echo "quantize binary not found: $quantize_bin" >&2
       exit 1
     fi
-    echo "[quantize] generating $(basename "$target") from $(basename "$source") as $quant_type"
+    log_note "[quantize] generating $(basename "$target") from $(basename "$source") as $quant_type"
     "$quantize_bin" "$source" "$target" "$quant_type"
   else
-    echo "[quantize] reuse existing $(basename "$target")"
+    log_note "[quantize] reuse existing $(basename "$target")"
   fi
 }
 
@@ -432,51 +439,61 @@ if [[ $run_all_precisions -eq 1 ]]; then
   for variant in "${variants[@]}"; do
     read -r suite_model_outtype suite_mmproj_outtype suite_model_quant_type <<< "$variant"
 
-    echo
-    echo "================================================================"
-    echo "[suite] model_outtype=$suite_model_outtype mmproj_outtype=$suite_mmproj_outtype model_quant_type=$suite_model_quant_type"
-    echo "================================================================"
+    suite_base_model_gguf="$output_dir/${model_name}-${suite_model_outtype}.gguf"
+    if [[ "$suite_model_quant_type" == "none" ]]; then
+      suite_gguf_model="$suite_base_model_gguf"
+    else
+      suite_gguf_model="$output_dir/${model_name}-${suite_model_outtype}-${suite_model_quant_type}.gguf"
+    fi
+    suite_mmproj="$output_dir/mmproj-${model_name}-${suite_mmproj_outtype}.gguf"
+    suite_label="model_outtype=$suite_model_outtype mmproj_outtype=$suite_mmproj_outtype model_quant_type=$suite_model_quant_type"
 
-    suite_cmd=(
-      "$script_path"
-      --model-dir "$model_dir"
-      --output-dir "$output_dir"
-      --model-outtype "$suite_model_outtype"
-      --mmproj-outtype "$suite_mmproj_outtype"
-      --model-quant-type "$suite_model_quant_type"
+    log_note ""
+    log_note "================================================================"
+    log_note "[suite] $suite_label"
+    log_note "================================================================"
+
+    convert_if_needed "$suite_base_model_gguf" --outtype "$suite_model_outtype"
+    if [[ "$suite_model_quant_type" != "none" ]]; then
+      quantize_if_needed "$suite_base_model_gguf" "$suite_gguf_model" "$suite_model_quant_type"
+    fi
+    convert_if_needed "$suite_mmproj" --outtype "$suite_mmproj_outtype" --mmproj
+
+    if [[ $skip_regression -eq 1 ]]; then
+      log_note "[suite] regression skipped"
+      suite_summary+=("$suite_label status=SKIPPED")
+      continue
+    fi
+
+    regression_cmd=(
+      "$python_bin"
+      "$repo_root/scripts/check_qwen3_vl_embedding_regression.py"
+      --repo-root "$repo_root"
+      --hf-model-dir "$model_dir"
+      --gguf-model "$suite_gguf_model"
+      --mmproj "$suite_mmproj"
+      --llama-bin "$llama_bin"
       --python-device "$python_device"
       --python-torch-dtype "$python_torch_dtype"
-      --llama-ngl "$llama_ngl"
       --regression-mode "$regression_mode"
-      --python-bin "$python_bin"
-      --cmake-bin "$cmake_bin"
-      --cuda-build "$effective_cuda_build"
-      --skip-build
+      --llama-ngl "$llama_ngl"
     )
 
     if [[ -n "$cuda_visible_devices" ]]; then
-      suite_cmd+=(--cuda-visible-devices "$cuda_visible_devices")
+      regression_cmd+=(--cuda-visible-devices "$cuda_visible_devices")
     fi
     if [[ $llama_no_mmproj_offload -eq 1 ]]; then
-      suite_cmd+=(--llama-no-mmproj-offload)
-    fi
-    if [[ $skip_regression -eq 1 ]]; then
-      suite_cmd+=(--skip-regression)
-    fi
-    if [[ -n "$results_file" ]]; then
-      suite_cmd+=(--results-file "$results_file")
-    fi
-    if [[ $force_convert -eq 1 ]]; then
-      suite_cmd+=(--force-convert)
+      regression_cmd+=(--llama-no-mmproj-offload)
     fi
 
-    if QWEN3_VL_RESULTS_APPEND=1 "${suite_cmd[@]}"; then
-      echo "[suite] completed"
-      suite_summary+=("model_outtype=$suite_model_outtype mmproj_outtype=$suite_mmproj_outtype model_quant_type=$suite_model_quant_type status=OK")
+    log_note "[regression] ${regression_cmd[*]}"
+    if run_regression_logged "$suite_label" "${regression_cmd[@]}"; then
+      log_note "[suite] completed"
+      suite_summary+=("$suite_label status=OK")
     else
-      echo "[suite] failed: model_outtype=$suite_model_outtype mmproj_outtype=$suite_mmproj_outtype model_quant_type=$suite_model_quant_type" >&2
+      log_note "[suite] failed: $suite_label"
       suite_failed=1
-      suite_summary+=("model_outtype=$suite_model_outtype mmproj_outtype=$suite_mmproj_outtype model_quant_type=$suite_model_quant_type status=FAILED")
+      suite_summary+=("$suite_label status=FAILED")
     fi
   done
 
@@ -487,7 +504,7 @@ if [[ $run_all_precisions -eq 1 ]]; then
       echo "suite_summary"
       printf '%s\n' "${suite_summary[@]}"
     } >> "$results_file"
-    echo "[suite] summary file: $results_file"
+    log_note "[suite] summary file: $results_file"
   fi
 
   exit $suite_failed
@@ -500,9 +517,9 @@ fi
 convert_if_needed "$mmproj" --outtype "$mmproj_outtype" --mmproj
 
 if [[ $skip_regression -eq 1 ]]; then
-  echo "[done] conversion finished"
-  echo "  gguf_model: $gguf_model"
-  echo "  mmproj:     $mmproj"
+  log_note "[done] conversion finished"
+  log_note "  gguf_model: $gguf_model"
+  log_note "  mmproj:     $mmproj"
   exit 0
 fi
 
@@ -528,6 +545,6 @@ if [[ $llama_no_mmproj_offload -eq 1 ]]; then
   regression_cmd+=(--llama-no-mmproj-offload)
 fi
 
-echo "[regression] ${regression_cmd[*]}"
+log_note "[regression] ${regression_cmd[*]}"
 run_label="model_outtype=$model_outtype mmproj_outtype=$mmproj_outtype model_quant_type=$model_quant_type"
 run_regression_logged "$run_label" "${regression_cmd[@]}"
