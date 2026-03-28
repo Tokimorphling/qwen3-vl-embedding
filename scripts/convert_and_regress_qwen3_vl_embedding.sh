@@ -10,12 +10,13 @@ Usage:
 Options:
   --model-dir PATH              Hugging Face model directory.
   --output-dir PATH             Directory used for generated GGUF files.
-  --outtype f16|f32            Output type for both main model and mmproj. Default: f16
+  --outtype f16|bf16|f32       Output type for both main model and mmproj. Default: f16
   --python-device auto|cpu|cuda
                                Device for the Python reference. Default: auto
   --cuda-visible-devices VALUE Override CUDA_VISIBLE_DEVICES for regression.
   --llama-ngl VALUE            Value passed to llama-vl-embedding as -ngl. Default: auto
   --llama-no-mmproj-offload    Pass --no-mmproj-offload to regression.
+  --cuda-build auto|on|off     Whether to configure llama.cpp with GGML_CUDA. Default: auto
   --python-bin PATH            Python executable. Default: python
   --cmake-bin PATH             CMake executable. Default: cmake
   --skip-build                 Skip building llama-vl-embedding.
@@ -42,6 +43,7 @@ skip_regression=0
 rebuild=0
 force_convert=0
 install_convert_deps=0
+cuda_build="auto"
 
 while (($# > 0)); do
   case "$1" in
@@ -75,6 +77,10 @@ while (($# > 0)); do
       ;;
     --python-bin)
       python_bin="$2"
+      shift 2
+      ;;
+    --cuda-build)
+      cuda_build="$2"
       shift 2
       ;;
     --cmake-bin)
@@ -114,9 +120,9 @@ while (($# > 0)); do
 done
 
 case "$outtype" in
-  f16|f32) ;;
+  f16|bf16|f32) ;;
   *)
-    echo "--outtype must be f16 or f32, got: $outtype" >&2
+    echo "--outtype must be f16, bf16, or f32, got: $outtype" >&2
     exit 1
     ;;
 esac
@@ -125,6 +131,14 @@ case "$python_device" in
   auto|cpu|cuda) ;;
   *)
     echo "--python-device must be auto, cpu, or cuda, got: $python_device" >&2
+    exit 1
+    ;;
+esac
+
+case "$cuda_build" in
+  auto|on|off) ;;
+  *)
+    echo "--cuda-build must be auto, on, or off, got: $cuda_build" >&2
     exit 1
     ;;
 esac
@@ -148,9 +162,40 @@ if [[ $install_convert_deps -eq 1 ]]; then
   "$python_bin" -m pip install -r "$llama_dir/requirements/requirements-convert_hf_to_gguf.txt"
 fi
 
+effective_cuda_build="$cuda_build"
+if [[ "$effective_cuda_build" == "auto" ]]; then
+  if [[ "$python_device" == "cuda" || "$llama_ngl" != "0" ]]; then
+    effective_cuda_build="on"
+  else
+    effective_cuda_build="off"
+  fi
+fi
+
+needs_reconfigure=0
+if [[ -f "$build_dir/CMakeCache.txt" ]]; then
+  current_cuda=$(sed -n 's/^GGML_CUDA:BOOL=//p' "$build_dir/CMakeCache.txt" | tail -n 1)
+  if [[ "$effective_cuda_build" == "on" && "$current_cuda" != "1" && "$current_cuda" != "ON" ]]; then
+    needs_reconfigure=1
+  fi
+  if [[ "$effective_cuda_build" == "off" && "$current_cuda" != "0" && "$current_cuda" != "OFF" ]]; then
+    needs_reconfigure=1
+  fi
+else
+  needs_reconfigure=1
+fi
+
 if [[ $skip_build -eq 0 ]]; then
-  if [[ $rebuild -eq 1 || ! -x "$llama_bin" ]]; then
-    "$cmake_bin" -S "$llama_dir" -B "$build_dir"
+  if [[ $rebuild -eq 1 || ! -x "$llama_bin" || $needs_reconfigure -eq 1 ]]; then
+    cmake_config_cmd=("$cmake_bin" -S "$llama_dir" -B "$build_dir")
+
+    if [[ "$effective_cuda_build" == "on" ]]; then
+      cmake_config_cmd+=(-DGGML_CUDA=ON)
+    elif [[ "$effective_cuda_build" == "off" ]]; then
+      cmake_config_cmd+=(-DGGML_CUDA=OFF)
+    fi
+
+    echo "[build] ${cmake_config_cmd[*]}"
+    "${cmake_config_cmd[@]}"
     "$cmake_bin" --build "$build_dir" --target llama-vl-embedding -j
   else
     echo "[build] reuse existing binary: $llama_bin"

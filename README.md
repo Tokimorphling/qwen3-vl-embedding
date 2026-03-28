@@ -91,16 +91,24 @@ python -m pip install -r ./llama.cpp/requirements/requirements-convert_hf_to_ggu
 常用参数：
 
 - `--model-dir PATH`: HF 模型目录
-- `--outtype f16|f32`: GGUF 输出类型，默认 `f16`
+- `--outtype f16|bf16|f32`: GGUF 输出类型，默认 `f16`
 - `--python-device auto|cpu|cuda`: Python 参考实现设备选择
 - `--cuda-visible-devices VALUE`: 显式指定 GPU
 - `--llama-ngl VALUE`: 传给 `llama-vl-embedding` 的 `-ngl`
 - `--llama-no-mmproj-offload`: 禁用 `mmproj` GPU offload
+- `--cuda-build auto|on|off`: 是否在构建阶段显式设置 `GGML_CUDA`
 - `--force-convert`: 即使目标 GGUF 已存在也重新转换
 - `--rebuild`: 强制重新构建 `llama-vl-embedding`
 - `--skip-build`: 跳过编译
 - `--skip-regression`: 只做转换，不跑回归
 - `--install-convert-deps`: 脚本内部执行一次 `pip install -r ...`
+
+说明：
+
+- 当前脚本的“GPU 模式”不只影响运行，也可以影响构建。
+- `--cuda-build auto` 时，如果 `--python-device cuda` 或 `--llama-ngl` 不是 `0`，脚本会在配置阶段传 `-DGGML_CUDA=ON`。
+- 如果你想强制 CPU 构建，可以显式传 `--cuda-build off`。
+- 如果现有 `build/` 目录里的 `GGML_CUDA` 配置和当前模式不一致，脚本会自动重新配置并重编，不会盲目复用旧二进制。
 
 ## 4. 手工转换
 
@@ -117,6 +125,15 @@ python ./convert_hf_to_gguf.py \
   --outtype f16
 ```
 
+如果你想生成 `bf16`：
+
+```bash
+python ./convert_hf_to_gguf.py \
+  ../models/Qwen3-VL-Embedding-2B \
+  --outfile ../Qwen3-VL-Embedding-2B-bf16.gguf \
+  --outtype bf16
+```
+
 ### 4.2 转 mmproj
 
 ```bash
@@ -124,6 +141,16 @@ python ./convert_hf_to_gguf.py \
   ../models/Qwen3-VL-Embedding-2B \
   --outfile ../mmproj-Qwen3-VL-Embedding-2B-f16.gguf \
   --outtype f16 \
+  --mmproj
+```
+
+`bf16` 版本：
+
+```bash
+python ./convert_hf_to_gguf.py \
+  ../models/Qwen3-VL-Embedding-2B \
+  --outfile ../mmproj-Qwen3-VL-Embedding-2B-bf16.gguf \
+  --outtype bf16 \
   --mmproj
 ```
 
