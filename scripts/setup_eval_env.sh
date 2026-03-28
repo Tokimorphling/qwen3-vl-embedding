@@ -7,7 +7,7 @@ ENV_NAME="qwen3vl-eval"
 PYTHON_VERSION="3.12"
 CUDA_VARIANT="cu128"
 VLMEVAL_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/VLMEvalKit"
-USE_CONDA=1
+USE_CONDA=0
 INSTALL_VLMEVAL=1
 PYTHON_BIN=""
 
@@ -17,19 +17,21 @@ Usage:
   setup_eval_env.sh [options]
 
 Options:
-  --env-name NAME         Conda env name. Default: qwen3vl-eval
+  --env-name NAME         Conda env name when --conda is used. Default: qwen3vl-eval
   --python-version VER    Python version for conda env. Default: 3.12
   --cuda VARIANT          PyTorch wheel variant: cu128|cu126|cu118|cpu. Default: cu128
-  --python-bin PATH       Use an existing Python interpreter instead of creating/activating conda
+  --python-bin PATH       Use a specific Python interpreter. Default: current shell python
   --vlmeval-dir PATH      VLMEvalKit checkout dir. Default: $XDG_CACHE_HOME/VLMEvalKit
+  --conda                 Create/activate a conda env before installing
   --no-vlmeval            Skip cloning/installing VLMEvalKit
-  --no-conda              Do not create/activate a conda env; use current shell python
+  --no-conda              Alias for the default behavior; use current shell python
   -h, --help              Show this help
 
 Examples:
   ./scripts/setup_eval_env.sh
   ./scripts/setup_eval_env.sh --cuda cu126
-  ./scripts/setup_eval_env.sh --cuda cpu --no-conda
+  ./scripts/setup_eval_env.sh --cuda cpu
+  ./scripts/setup_eval_env.sh --conda --env-name qwen3vl-eval
 EOF
 }
 
@@ -54,6 +56,10 @@ while [[ $# -gt 0 ]]; do
         --vlmeval-dir)
             VLMEVAL_DIR="$2"
             shift 2
+            ;;
+        --conda)
+            USE_CONDA=1
+            shift
             ;;
         --no-vlmeval)
             INSTALL_VLMEVAL=0
@@ -154,18 +160,21 @@ if [[ "${INSTALL_VLMEVAL}" -eq 1 ]]; then
     "${PYTHON_BIN}" -m pip install -e "${VLMEVAL_DIR}"
 fi
 
+ENV_DESC="current python"
+if [[ "${USE_CONDA}" -eq 1 ]]; then
+    ENV_DESC="${ENV_NAME}"
+fi
+
 cat <<EOF
 
 Done.
 python: ${PYTHON_BIN}
-env   : ${ENV_NAME}
+env   : ${ENV_DESC}
 cuda  : ${CUDA_VARIANT}
 
 Next:
-  1. Activate env if needed:
-     conda activate ${ENV_NAME}
-  2. Build both llama-server binaries:
+  1. Build both llama-server binaries:
      ${ROOT_DIR}/scripts/build_both_llama_servers.sh
-  3. Run VLMEval compare:
+  2. Run VLMEval compare:
      ${ROOT_DIR}/scripts/run_vlmeval_llama_server_compare.sh --preset doc
 EOF
