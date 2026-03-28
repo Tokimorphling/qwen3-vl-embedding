@@ -7,3 +7,6 @@
 	path = Qwen3-VL-Embedding
 	url = https://github.com/QwenLM/Qwen3-VL-Embedding.git
 	ignore = dirty
+[submodule "llama.cpp-clean"]
+	path = llama.cpp-clean
+	url = https://github.com/Tokimorphling/llama.cpp.git

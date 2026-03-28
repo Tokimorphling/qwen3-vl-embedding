@@ -4,7 +4,6 @@
 /*.safetensors
 
 # Local scratch copies and logs
-/llama.cpp-clean/
 /VLM2Vec/
 /logs/
 /tmp_*.log
