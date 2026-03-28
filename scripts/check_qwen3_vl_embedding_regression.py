@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import gc
 import io
 import json
 import os
@@ -253,6 +254,14 @@ def maybe_torch_cuda_synchronize() -> None:
         torch.cuda.synchronize()
 
 
+def release_torch_cuda_memory() -> None:
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        if hasattr(torch.cuda, "ipc_collect"):
+            torch.cuda.ipc_collect()
+
+
 def configure_python_reference_logging() -> None:
     warnings.filterwarnings(
         "ignore",
@@ -385,6 +394,14 @@ def run_llama_embedding(
         t0 = time.perf_counter()
         proc = subprocess.run(cmd, capture_output=True, text=True, check=True, env=env)
         wall_time_s = time.perf_counter() - t0
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            "llama-vl-embedding failed\n"
+            f"command: {' '.join(cmd)}\n"
+            f"returncode: {exc.returncode}\n"
+            f"stdout:\n{exc.stdout}\n"
+            f"stderr:\n{exc.stderr}"
+        ) from exc
     finally:
         temp_path.unlink(missing_ok=True)
 
@@ -455,6 +472,7 @@ def main() -> int:
         inputs,
         args.python_torch_dtype,
     )
+    release_torch_cuda_memory()
     llama_env = os.environ.copy()
     got, llama_timings = run_llama_embedding(
         args.llama_bin,
