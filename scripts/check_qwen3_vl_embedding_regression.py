@@ -97,6 +97,12 @@ def parse_args() -> argparse.Namespace:
         help="Device selection for the Python reference implementation.",
     )
     parser.add_argument(
+        "--python-torch-dtype",
+        choices=("auto", "float32", "float16", "bfloat16"),
+        default="auto",
+        help="Optional torch_dtype override for the Python reference model.",
+    )
+    parser.add_argument(
         "--cuda-visible-devices",
         default=None,
         help="Override CUDA_VISIBLE_DEVICES before loading the Python reference or launching llama-vl-embedding.",
@@ -212,6 +218,7 @@ def run_python_reference(
     python_model_root: Path,
     hf_model_dir: Path,
     inputs: list[dict[str, Any]],
+    python_torch_dtype: str,
 ) -> tuple[np.ndarray, RunTimings]:
     sys.path.insert(0, str(python_model_root))
     try:
@@ -222,7 +229,16 @@ def run_python_reference(
     quiet = io.StringIO()
     with contextlib.redirect_stdout(quiet):
         t0 = time.perf_counter()
-        embedder = Qwen3VLEmbedder(model_name_or_path=str(hf_model_dir))
+        embedder_kwargs: dict[str, Any] = {}
+        if python_torch_dtype != "auto":
+            dtype_map = {
+                "float32": torch.float32,
+                "float16": torch.float16,
+                "bfloat16": torch.bfloat16,
+            }
+            embedder_kwargs["torch_dtype"] = dtype_map[python_torch_dtype]
+
+        embedder = Qwen3VLEmbedder(model_name_or_path=str(hf_model_dir), **embedder_kwargs)
         maybe_torch_cuda_synchronize()
         load_time_s = time.perf_counter() - t0
 
@@ -366,7 +382,12 @@ def main() -> int:
 
     labels, inputs = load_inputs(args.inputs_file, args.repo_root)
 
-    ref, python_timings = run_python_reference(args.python_model_root, args.hf_model_dir, inputs)
+    ref, python_timings = run_python_reference(
+        args.python_model_root,
+        args.hf_model_dir,
+        inputs,
+        args.python_torch_dtype,
+    )
     llama_env = os.environ.copy()
     got, llama_timings = run_llama_embedding(
         args.llama_bin,
@@ -386,7 +407,8 @@ def main() -> int:
     print(f"samples: {len(labels)}")
     print(
         f"cuda_visible_devices: {os.environ.get('CUDA_VISIBLE_DEVICES', '')!r} "
-        f"python_device_request={args.python_device}"
+        f"python_device_request={args.python_device} "
+        f"python_torch_dtype={args.python_torch_dtype}"
     )
     print_timing_summary(python_timings, llama_timings, args)
     print()
@@ -420,11 +442,43 @@ def main() -> int:
     pairwise_max = float(sim_diff.max())
     pairwise_mean = float(sim_diff.mean())
 
+    if len(labels) >= 2:
+        ref_pairs = ref_sim[np.triu_indices(len(labels), k=1)]
+        got_pairs = got_sim[np.triu_indices(len(labels), k=1)]
+
+        ref_centered = ref_pairs - ref_pairs.mean()
+        got_centered = got_pairs - got_pairs.mean()
+        denom = np.linalg.norm(ref_centered) * np.linalg.norm(got_centered)
+        pairwise_pearson = float(np.dot(ref_centered, got_centered) / denom) if denom > 0 else 1.0
+
+        ref_rank = np.argsort(-np.where(np.eye(len(labels), dtype=bool), -np.inf, ref_sim), axis=1)
+        got_rank = np.argsort(-np.where(np.eye(len(labels), dtype=bool), -np.inf, got_sim), axis=1)
+        nn_top1_acc = float((ref_rank[:, 0] == got_rank[:, 0]).mean())
+        topk = min(3, len(labels) - 1)
+        topk_overlap = float(
+            np.mean(
+                [
+                    len(set(ref_rank[i, :topk]).intersection(set(got_rank[i, :topk]))) / topk
+                    for i in range(len(labels))
+                ]
+            )
+        )
+    else:
+        pairwise_pearson = 1.0
+        nn_top1_acc = 1.0
+        topk_overlap = 1.0
+
     print()
     print(
         "pairwise_similarity: "
         f"max_abs_diff={pairwise_max:.9f} "
         f"mean_abs_diff={pairwise_mean:.9f}"
+    )
+    print(
+        "retrieval_consistency: "
+        f"pairwise_pearson={pairwise_pearson:.9f} "
+        f"nn_top1_acc={nn_top1_acc:.9f} "
+        f"top{min(3, max(1, len(labels) - 1))}_overlap={topk_overlap:.9f}"
     )
 
     if pairwise_max > args.max_pairwise_diff:
