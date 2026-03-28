@@ -132,7 +132,22 @@ else
 fi
 
 require_cmd git
-"${PYTHON_BIN}" -m pip install --upgrade pip setuptools wheel
+"${PYTHON_BIN}" -m pip install --upgrade pip wheel
+
+echo "[pip] forcing modern setuptools/pkg_resources for Python 3.12"
+"${PYTHON_BIN}" -m pip install --upgrade --ignore-installed "setuptools>=75"
+
+"${PYTHON_BIN}" - <<'PY'
+import pkg_resources
+import sys
+
+print(f"[check] pkg_resources: {pkg_resources.__file__}")
+if "/usr/lib/python3/dist-packages/pkg_resources" in pkg_resources.__file__:
+    raise SystemExit(
+        "Old system pkg_resources is still active. "
+        "Use a virtualenv/conda env, or reinstall setuptools into the active interpreter."
+    )
+PY
 
 echo "[pip] installing core build deps"
 "${PYTHON_BIN}" -m pip install cmake ninja packaging tabulate
