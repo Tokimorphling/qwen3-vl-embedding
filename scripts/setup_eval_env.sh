@@ -134,8 +134,8 @@ fi
 require_cmd git
 "${PYTHON_BIN}" -m pip install --upgrade pip wheel
 
-echo "[pip] forcing modern setuptools/pkg_resources for Python 3.12"
-"${PYTHON_BIN}" -m pip install --upgrade --ignore-installed "setuptools>=75"
+echo "[pip] installing setuptools with pkg_resources support"
+"${PYTHON_BIN}" -m pip install --upgrade --ignore-installed "setuptools>=75,<82"
 
 "${PYTHON_BIN}" - <<'PY'
 import pkg_resources
