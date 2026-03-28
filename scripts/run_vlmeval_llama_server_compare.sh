@@ -12,6 +12,7 @@ WORK_DIR="${ROOT_DIR}/logs/vlmeval_compare_$(date +%Y%m%d_%H%M%S)"
 HF_REPO="Qwen/Qwen3-VL-4B-Instruct-GGUF:Q4_K_M"
 MODEL_ALIAS="qwen3-vl-local"
 DATASETS="MME,MMStar,HallusionBench,RealWorldQA"
+PRESET=""
 MOD_PORT=18081
 CLEAN_PORT=18082
 API_KEY="sk-local-vlmeval"
@@ -33,6 +34,7 @@ Options:
   --vlmeval-dir PATH         VLMEvalKit checkout dir. Default: $XDG_CACHE_HOME/VLMEvalKit
   --work-dir PATH            Output dir for VLMEvalKit and summary files
   --hf-repo REPO[:QUANT]     HF GGUF repo for both servers
+  --preset NAME              Dataset preset: quick|doc|general|all
   --datasets CSV             Comma-separated datasets. Default: MME,MMStar,HallusionBench,RealWorldQA
   --ctx-size N               llama-server ctx size. Default: 8192
   --gpu-layers N|auto|all    llama-server --gpu-layers. Default: auto
@@ -47,6 +49,11 @@ Options:
   -h, --help                 Show this help
 
 Notes:
+  - quick   : fast exact-match smoke test
+  - doc     : more sensitive to OCR / document / perception changes
+  - general : stronger broad VLM comparison
+  - all     : union of all supported datasets in this wrapper
+  - If both --preset and --datasets are provided, --datasets wins.
   - Default datasets are chosen to work with exact matching, so no judge API is required.
   - The script starts two local OpenAI-compatible llama-server instances, runs VLMEvalKit once
     with both models, then writes a markdown summary into WORK_DIR/summary.md.
@@ -73,6 +80,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --hf-repo)
             HF_REPO="$2"
+            shift 2
+            ;;
+        --preset)
+            PRESET="$2"
             shift 2
             ;;
         --datasets)
@@ -140,6 +151,27 @@ import os, sys
 print(os.path.abspath(os.path.expanduser(sys.argv[1])))
 PY
 )"
+
+if [[ -n "${PRESET}" ]]; then
+    case "${PRESET}" in
+        quick)
+            DATASETS="MME,MMStar,HallusionBench,RealWorldQA"
+            ;;
+        doc)
+            DATASETS="DocVQA_VAL,MME-RealWorld-Lite,RealWorldQA,MMBench_DEV_EN"
+            ;;
+        general)
+            DATASETS="MMStar,RealWorldQA,MMBench_DEV_EN,MMMU_DEV_VAL"
+            ;;
+        all)
+            DATASETS="MME,HallusionBench,MMStar,RealWorldQA,MMBench_DEV_EN,MME-RealWorld-Lite,MMMU_DEV_VAL,DocVQA_VAL"
+            ;;
+        *)
+            echo "Unknown preset: ${PRESET}" >&2
+            exit 2
+            ;;
+    esac
+fi
 
 MOD_BIN="${MOD_LLAMA_DIR}/build/bin/llama-server"
 CLEAN_BIN="${CLEAN_LLAMA_DIR}/build/bin/llama-server"
@@ -316,6 +348,7 @@ require_cmd curl
 require_cmd git
 
 mkdir -p "${WORK_DIR}"
+echo "[config] datasets=${DATASETS}"
 ensure_llama_server "${MOD_LLAMA_DIR}" "${MOD_BIN}"
 ensure_llama_server "${CLEAN_LLAMA_DIR}" "${CLEAN_BIN}"
 ensure_vlmeval
