@@ -1,0 +1,9 @@
+[submodule "llama.cpp"]
+	path = llama.cpp
+	url = https://github.com/Tokimorphling/llama.cpp.git
+	ignore = dirty
+
+[submodule "Qwen3-VL-Embedding"]
+	path = Qwen3-VL-Embedding
+	url = https://github.com/QwenLM/Qwen3-VL-Embedding.git
+	ignore = dirty

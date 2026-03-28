@@ -1,0 +1,36 @@
+# Large local model artifacts
+/models/
+/*.gguf
+/*.safetensors
+
+# Local scratch copies and logs
+/llama.cpp-clean/
+/tmp_*.log
+/*.log
+/*.out
+
+# Python caches and environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local scratch scripts
+/qwen3vl.py
+/test.py
+
+# Build artifacts
+/build/
+/cmake-build-*/
+**/build/
+*.so
+*.o
+*.a
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/

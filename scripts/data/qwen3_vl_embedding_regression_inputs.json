@@ -1,0 +1,27 @@
+[
+  {
+    "name": "text_query",
+    "text": "A woman playing with her dog on a beach at sunset.",
+    "instruction": "Retrieve images or text relevant to the user's query."
+  },
+  {
+    "name": "text_doc",
+    "text": "A woman shares a joyful moment with her golden retriever on a sun-drenched beach at sunset, as the dog offers its paw in a heartwarming display of companionship and trust."
+  },
+  {
+    "name": "text_concat",
+    "text": [
+      "hello",
+      "world"
+    ]
+  },
+  {
+    "name": "image_only",
+    "image": "Qwen3-VL-Embedding/data/examples/0.jpeg"
+  },
+  {
+    "name": "image_text",
+    "text": "A woman shares a joyful moment with her golden retriever on a sun-drenched beach at sunset, as the dog offers its paw in a heartwarming display of companionship and trust.",
+    "image": "Qwen3-VL-Embedding/data/examples/0.jpeg"
+  }
+]
