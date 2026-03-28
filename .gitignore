@@ -5,6 +5,7 @@
 
 # Local scratch copies and logs
 /llama.cpp-clean/
+/logs/
 /tmp_*.log
 /*.log
 /*.out

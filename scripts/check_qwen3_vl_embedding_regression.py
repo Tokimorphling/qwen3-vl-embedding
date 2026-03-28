@@ -12,12 +12,15 @@ import subprocess
 import sys
 import tempfile
 import time
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 
 import numpy as np
 import torch
@@ -250,20 +253,41 @@ def maybe_torch_cuda_synchronize() -> None:
         torch.cuda.synchronize()
 
 
+def configure_python_reference_logging() -> None:
+    warnings.filterwarnings(
+        "ignore",
+        message=r"Skipping import of cpp extensions due to incompatible torch version .*",
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"`torch_dtype` is deprecated! Use `dtype` instead!",
+    )
+
+    try:
+        from transformers.utils import logging as transformers_logging
+
+        transformers_logging.set_verbosity_error()
+        if hasattr(transformers_logging, "disable_progress_bar"):
+            transformers_logging.disable_progress_bar()
+    except Exception:
+        pass
+
+
 def run_python_reference(
     python_model_root: Path,
     hf_model_dir: Path,
     inputs: list[dict[str, Any]],
     python_torch_dtype: str,
 ) -> tuple[np.ndarray, RunTimings]:
-    sys.path.insert(0, str(python_model_root))
-    try:
-        from src.models.qwen3_vl_embedding import Qwen3VLEmbedder
-    finally:
-        sys.path.pop(0)
-
+    configure_python_reference_logging()
     quiet = io.StringIO()
-    with contextlib.redirect_stdout(quiet):
+    with contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+        sys.path.insert(0, str(python_model_root))
+        try:
+            from src.models.qwen3_vl_embedding import Qwen3VLEmbedder
+        finally:
+            sys.path.pop(0)
+
         t0 = time.perf_counter()
         embedder_kwargs: dict[str, Any] = {}
         if python_torch_dtype != "auto":
