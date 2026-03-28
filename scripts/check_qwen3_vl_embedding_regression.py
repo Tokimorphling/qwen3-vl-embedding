@@ -237,7 +237,9 @@ def run_python_reference(
         total_time_s=load_time_s + run_time_s,
         device=device,
     )
-    return embeddings.detach().cpu().numpy().astype(np.float32), timings
+    # Some GPU-capable environments return BF16 embeddings from the HF reference
+    # path, but torch->numpy BF16 conversion is not universally supported.
+    return embeddings.detach().to(dtype=torch.float32, device="cpu").numpy(), timings
 
 
 def parse_llama_timings(output: str) -> RunTimings:
