@@ -110,6 +110,7 @@ python -m pip install -r ./llama.cpp/requirements/requirements-convert_hf_to_ggu
   --python-torch-dtype float16 \
   --cuda-visible-devices 0 \
   --regression-mode retrieval \
+  --results-file ./logs/qwen3-vl-embedding-8b-sweep.txt \
   --run-all-precisions
 ```
 
@@ -158,6 +159,7 @@ python -m pip install -r ./llama.cpp/requirements/requirements-convert_hf_to_ggu
 - `--llama-no-mmproj-offload`: 禁用 `mmproj` GPU offload
 - `--regression-mode strict|retrieval`: 回归判定模式，默认 `strict`
 - `--run-all-precisions`: 依次跑 `f32`、`bf16`、`f16`、`Q8_0(main)+mmproj-f16`
+- `--results-file PATH`: 把详细回归输出和 sweep 汇总追加写入文件
 - `--cuda-build auto|on|off`: 是否在构建阶段显式设置 `GGML_CUDA`
 - `--force-convert`: 即使目标 GGUF 已存在也重新转换
 - `--rebuild`: 强制重新构建 `llama-vl-embedding`
@@ -175,6 +177,7 @@ python -m pip install -r ./llama.cpp/requirements/requirements-convert_hf_to_ggu
 - 量化只对主模型做，`mmproj` 仍建议保留 `f16` 或 `f32`。
 - `strict` 模式沿用原来的数值阈值，适合做 2B 这类已高度对齐的精确回归。
 - `retrieval` 模式主要看 `pairwise_pearson`、`Spearman`、`Recall@K`、`MRR`，更适合像 8B 这种排序稳定但逐元素仍有小残差的场景。
+- 如果传了 `--results-file`，终端会只保留精简摘要，完整回归输出会写进文件，适合长时间 sweep。
 - 做“精度 sweep”时，建议把 `--python-torch-dtype` 固定住，而不是用 `auto`。否则不同机器上 Python 参考可能会在 `bf16/float16/float32` 之间变化，导致你很难判断差异到底来自 `llama.cpp` 还是参考实现本身。
 - 如果你的目标是模拟 A100 上的默认部署行为，`--python-torch-dtype bfloat16` 或 `auto` 都可以；如果你的目标是做 apples-to-apples 的数值比较，建议显式用 `float32` 对 `f32`，用 `float16` 对 `f16/Q8_0`。
 

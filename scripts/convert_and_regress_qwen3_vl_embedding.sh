@@ -25,6 +25,7 @@ Options:
   --regression-mode strict|retrieval
                                Regression policy. Default: strict
   --run-all-precisions         Run a built-in sweep: f32/f32, bf16/bf16, f16/f16, Q8_0(main)+f16(mmproj)
+  --results-file PATH          Append detailed regression logs and suite summary to this file.
   --cuda-build auto|on|off     Whether to configure llama.cpp with GGML_CUDA. Default: auto
   --python-bin PATH            Python executable. Default: python
   --cmake-bin PATH             CMake executable. Default: cmake
@@ -52,6 +53,7 @@ llama_ngl="auto"
 llama_no_mmproj_offload=0
 regression_mode="strict"
 run_all_precisions=0
+results_file=""
 python_bin="${PYTHON:-python}"
 cmake_bin="${CMAKE:-cmake}"
 skip_build=0
@@ -114,6 +116,10 @@ while (($# > 0)); do
     --run-all-precisions)
       run_all_precisions=1
       shift
+      ;;
+    --results-file)
+      results_file="$2"
+      shift 2
       ;;
     --python-bin)
       python_bin="$2"
@@ -237,6 +243,13 @@ esac
 model_dir=$(cd "$(dirname "$model_dir")" && pwd)/$(basename "$model_dir")
 mkdir -p "$output_dir"
 output_dir=$(cd "$output_dir" && pwd)
+if [[ -n "$results_file" ]]; then
+  mkdir -p "$(dirname "$results_file")"
+  results_file=$(cd "$(dirname "$results_file")" && pwd)/$(basename "$results_file")
+  if [[ "${QWEN3_VL_RESULTS_APPEND-0}" != "1" ]]; then
+    : > "$results_file"
+  fi
+fi
 llama_dir="$repo_root/llama.cpp"
 build_dir="$llama_dir/build"
 llama_bin="$build_dir/bin/llama-vl-embedding"
@@ -336,8 +349,79 @@ quantize_if_needed() {
   fi
 }
 
+append_results_header() {
+  local title=$1
+  if [[ -z "$results_file" ]]; then
+    return
+  fi
+
+  {
+    echo
+    echo "================================================================"
+    echo "$title"
+    echo "timestamp: $(date '+%Y-%m-%d %H:%M:%S %z')"
+    echo "repo_root: $repo_root"
+    echo "model_dir: $model_dir"
+    echo "python_device: $python_device"
+    echo "python_torch_dtype: $python_torch_dtype"
+    echo "llama_ngl: $llama_ngl"
+    echo "llama_no_mmproj_offload: $llama_no_mmproj_offload"
+    echo "regression_mode: $regression_mode"
+    echo "cuda_visible_devices: ${cuda_visible_devices-}"
+    echo "================================================================"
+  } >> "$results_file"
+}
+
+run_regression_logged() {
+  local label=$1
+  shift
+  local -a cmd=("$@")
+  local tmp
+  tmp=$(mktemp)
+
+  append_results_header "$label"
+  if [[ -n "$results_file" ]]; then
+    {
+      echo "[command] ${cmd[*]}"
+    } >> "$results_file"
+  fi
+
+  set +e
+  "${cmd[@]}" >"$tmp" 2>&1
+  local status=$?
+  set -e
+
+  if [[ -n "$results_file" ]]; then
+    cat "$tmp" >> "$results_file"
+  fi
+
+  if [[ -n "$results_file" ]]; then
+    local python_line llama_line pairwise_line retrieval_line metrics_line result_line
+    python_line=$(grep -m1 '^python_reference:' "$tmp" || true)
+    llama_line=$(grep -m1 '^llama_vl_embedding:' "$tmp" || true)
+    pairwise_line=$(grep -m1 '^pairwise_similarity:' "$tmp" || true)
+    retrieval_line=$(grep -m1 '^retrieval_consistency:' "$tmp" || true)
+    metrics_line=$(grep -m1 '^retrieval_metrics:' "$tmp" || true)
+    result_line=$(grep -m1 '^regression_check:' "$tmp" || true)
+
+    echo "[$label] ${result_line:-exit_code=$status}"
+    [[ -n "$python_line" ]] && echo "[$label] $python_line"
+    [[ -n "$llama_line" ]] && echo "[$label] $llama_line"
+    [[ -n "$pairwise_line" ]] && echo "[$label] $pairwise_line"
+    [[ -n "$retrieval_line" ]] && echo "[$label] $retrieval_line"
+    [[ -n "$metrics_line" ]] && echo "[$label] $metrics_line"
+    echo "[$label] detailed log: $results_file"
+  else
+    cat "$tmp"
+  fi
+
+  rm -f "$tmp"
+  return $status
+}
+
 if [[ $run_all_precisions -eq 1 ]]; then
   suite_failed=0
+  suite_summary=()
   variants=(
     "f32 f32 none"
     "bf16 bf16 none"
@@ -379,17 +463,32 @@ if [[ $run_all_precisions -eq 1 ]]; then
     if [[ $skip_regression -eq 1 ]]; then
       suite_cmd+=(--skip-regression)
     fi
+    if [[ -n "$results_file" ]]; then
+      suite_cmd+=(--results-file "$results_file")
+    fi
     if [[ $force_convert -eq 1 ]]; then
       suite_cmd+=(--force-convert)
     fi
 
-    if "${suite_cmd[@]}"; then
+    if QWEN3_VL_RESULTS_APPEND=1 "${suite_cmd[@]}"; then
       echo "[suite] completed"
+      suite_summary+=("model_outtype=$suite_model_outtype mmproj_outtype=$suite_mmproj_outtype model_quant_type=$suite_model_quant_type status=OK")
     else
       echo "[suite] failed: model_outtype=$suite_model_outtype mmproj_outtype=$suite_mmproj_outtype model_quant_type=$suite_model_quant_type" >&2
       suite_failed=1
+      suite_summary+=("model_outtype=$suite_model_outtype mmproj_outtype=$suite_mmproj_outtype model_quant_type=$suite_model_quant_type status=FAILED")
     fi
   done
+
+  if [[ -n "$results_file" ]]; then
+    {
+      echo
+      echo "================================================================"
+      echo "suite_summary"
+      printf '%s\n' "${suite_summary[@]}"
+    } >> "$results_file"
+    echo "[suite] summary file: $results_file"
+  fi
 
   exit $suite_failed
 fi
@@ -430,4 +529,5 @@ if [[ $llama_no_mmproj_offload -eq 1 ]]; then
 fi
 
 echo "[regression] ${regression_cmd[*]}"
-"${regression_cmd[@]}"
+run_label="model_outtype=$model_outtype mmproj_outtype=$mmproj_outtype model_quant_type=$model_quant_type"
+run_regression_logged "$run_label" "${regression_cmd[@]}"
