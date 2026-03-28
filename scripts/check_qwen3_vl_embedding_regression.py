@@ -20,6 +20,7 @@ os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 import numpy as np
+import torch
 
 
 @dataclass
