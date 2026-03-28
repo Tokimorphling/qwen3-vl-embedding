@@ -338,7 +338,65 @@ Interpretation:
 - `retrieval = OK`: ranking consistency is good on the current fixture, but you should still validate on a larger evaluation set
 - the default fixture only has 5 samples, so `Recall@1 = 1.0` and `MRR = 1.0` should be treated as smoke-test signals, not as final evidence
 
-## 6. Why This Patched Version Is Closer to the Official Implementation
+## 6. Ablation: `vl-embedding` Frontend Alone Is Not Enough
+
+To show that the later Qwen3-VL alignment commits are actually necessary, you can
+compare against the frontend-only commit `e60684b`.
+
+The following commands:
+
+1. create a temporary worktree at `e60684b`
+2. build `llama-vl-embedding` with `-j4`
+3. run the same `2B + f32 + python float32 + strict` regression
+
+```bash
+git -C ./llama.cpp worktree add /tmp/llama.cpp-vl-only-test e60684b
+
+cmake -S /tmp/llama.cpp-vl-only-test -B /tmp/llama.cpp-vl-only-test/build -DGGML_CUDA=ON
+CMAKE_BUILD_PARALLEL_LEVEL=4 cmake --build /tmp/llama.cpp-vl-only-test/build --target llama-vl-embedding
+
+python ./scripts/check_qwen3_vl_embedding_regression.py \
+  --repo-root . \
+  --hf-model-dir ./models/Qwen3-VL-Embedding-2B \
+  --gguf-model ./Qwen3-VL-Embedding-2B-f32.gguf \
+  --mmproj ./mmproj-Qwen3-VL-Embedding-2B-f32.gguf \
+  --llama-bin /tmp/llama.cpp-vl-only-test/build/bin/llama-vl-embedding \
+  --python-device cuda \
+  --python-torch-dtype float32 \
+  --regression-mode strict \
+  --llama-ngl auto \
+  --cuda-visible-devices 0
+```
+
+Observed result:
+
+- text remains essentially unchanged:
+  - `text_query cosine = 0.999999285`
+  - `text_doc cosine = 0.999999642`
+  - `text_concat cosine = 0.999999940`
+- image behavior degrades significantly:
+  - `image_only cosine = 0.969332635`
+  - `image_text cosine = 0.988328397`
+  - `pairwise_similarity max_abs_diff = 0.047971517`
+  - `nn_top1_acc = 0.8`
+  - `recall_at_1 = 0.8`
+  - `regression_check = FAILED`
+
+Compared with the current patched version:
+
+- the same regression now returns `regression_check = OK`
+- current version:
+  - `image_only cosine = 0.999910116`
+  - `image_text cosine = 0.999916017`
+  - `pairwise_similarity max_abs_diff = 0.000650585`
+
+This ablation shows:
+
+- `e60684b` mainly solves the CLI / frontend entry point
+- the `vl-embedding` frontend alone is not enough to align Qwen3-VL image behavior
+- the later `d37dfa2`, `646165f`, and the resize follow-up are what bring the multimodal path close to HF
+
+## 7. Why This Patched Version Is Closer to the Official Implementation
 
 There are two different meanings of "closer":
 
@@ -356,7 +414,7 @@ Key points:
 
 Patch embedding itself was not rewritten aggressively because upstream's stable patch-conv path is already basically equivalent for single-image inputs.
 
-## 7. Verified Alignment
+## 8. Verified Alignment
 
 The current version has been validated against the official Python / HF reference on:
 

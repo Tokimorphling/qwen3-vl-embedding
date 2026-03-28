@@ -338,7 +338,64 @@ python ./scripts/check_qwen3_vl_embedding_regression.py \
 - `retrieval = OK`：当前样例上的排序一致性足够好，但仍应结合更大的评测集再做最终判断。
 - 当前固定 fixture 只有 5 条样例，`Recall@1/MRR = 1.0` 的解释力度有限，更适合作为日常 smoke test。
 
-## 6. 为什么当前改动版更接近官方实现
+## 6. Ablation：只有 `vl-embedding` 前端还不够
+
+为了验证后续 `Qwen3-VL` 适配提交是不是“必须的”，可以直接拿只包含前端提交 `e60684b` 的版本做对照。
+
+下面这组命令会：
+
+1. 在临时 worktree 检出 `e60684b`
+2. 用 `-j4` 编译 `llama-vl-embedding`
+3. 对同一套 `2B + f32 + python float32 + strict` 样例跑回归
+
+```bash
+git -C ./llama.cpp worktree add /tmp/llama.cpp-vl-only-test e60684b
+
+cmake -S /tmp/llama.cpp-vl-only-test -B /tmp/llama.cpp-vl-only-test/build -DGGML_CUDA=ON
+CMAKE_BUILD_PARALLEL_LEVEL=4 cmake --build /tmp/llama.cpp-vl-only-test/build --target llama-vl-embedding
+
+python ./scripts/check_qwen3_vl_embedding_regression.py \
+  --repo-root . \
+  --hf-model-dir ./models/Qwen3-VL-Embedding-2B \
+  --gguf-model ./Qwen3-VL-Embedding-2B-f32.gguf \
+  --mmproj ./mmproj-Qwen3-VL-Embedding-2B-f32.gguf \
+  --llama-bin /tmp/llama.cpp-vl-only-test/build/bin/llama-vl-embedding \
+  --python-device cuda \
+  --python-torch-dtype float32 \
+  --regression-mode strict \
+  --llama-ngl auto \
+  --cuda-visible-devices 0
+```
+
+实际结果：
+
+- 文本三条几乎不变：
+  - `text_query cosine = 0.999999285`
+  - `text_doc cosine = 0.999999642`
+  - `text_concat cosine = 0.999999940`
+- 图像路径明显退化：
+  - `image_only cosine = 0.969332635`
+  - `image_text cosine = 0.988328397`
+  - `pairwise_similarity max_abs_diff = 0.047971517`
+  - `nn_top1_acc = 0.8`
+  - `recall_at_1 = 0.8`
+  - `regression_check = FAILED`
+
+对比当前版：
+
+- 当前版同一套回归是 `regression_check = OK`
+- 当前版：
+  - `image_only cosine = 0.999910116`
+  - `image_text cosine = 0.999916017`
+  - `pairwise_similarity max_abs_diff = 0.000650585`
+
+这个 ablation 说明：
+
+- `e60684b` 主要解决的是 CLI / 前端入口
+- 仅有 `vl-embedding` 前端并不能把 Qwen3-VL 的图像路径对齐到官方实现
+- 真正把多模态结果拉近 HF 的，是后续 `d37dfa2`、`646165f`，以及之后的 resize follow-up fix
+
+## 7. 为什么当前改动版更接近官方实现
 
 这里区分两种“接近”：
 
@@ -356,7 +413,7 @@ python ./scripts/check_qwen3_vl_embedding_regression.py \
 
 反过来说，patch embedding 主干并没有被强行全面重写，因为 upstream 的稳定 patch conv 路径对单图输入本来就基本等价。
 
-## 7. 已验证的对齐结果
+## 8. 已验证的对齐结果
 
 当前版本里，`vl-embedding` 与官方 Python / HF 参考实现已经在这些输入上做过对齐：
 
