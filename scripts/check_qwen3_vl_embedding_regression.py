@@ -345,6 +345,13 @@ def fmt_time(value: float | None) -> str:
     return "-" if value is None else f"{value:.3f}s"
 
 
+def descending_ranks(values: np.ndarray) -> np.ndarray:
+    order = np.argsort(-values, kind="stable")
+    ranks = np.empty_like(order)
+    ranks[order] = np.arange(len(values))
+    return ranks
+
+
 def print_timing_summary(python_timings: RunTimings, llama_timings: RunTimings, args: argparse.Namespace) -> None:
     print(
         "python_reference: "
@@ -463,10 +470,51 @@ def main() -> int:
                 ]
             )
         )
+
+        recall_at_1 = nn_top1_acc
+        recall_at_k_hits = []
+        reciprocal_ranks = []
+        spearman_values = []
+        for i in range(len(labels)):
+            mask = np.ones(len(labels), dtype=bool)
+            mask[i] = False
+
+            ref_scores = ref_sim[i, mask]
+            got_scores = got_sim[i, mask]
+            ref_candidates = np.arange(len(labels))[mask]
+
+            ref_order = ref_candidates[np.argsort(-ref_scores, kind="stable")]
+            got_order = ref_candidates[np.argsort(-got_scores, kind="stable")]
+
+            target = ref_order[0]
+            target_rank = int(np.where(got_order == target)[0][0])
+            recall_at_k_hits.append(float(target_rank < topk))
+            reciprocal_ranks.append(1.0 / float(target_rank + 1))
+
+            ref_ranks = descending_ranks(ref_scores)
+            got_ranks = descending_ranks(got_scores)
+            if len(ref_ranks) > 1:
+                ref_centered = ref_ranks.astype(np.float64) - ref_ranks.mean()
+                got_centered = got_ranks.astype(np.float64) - got_ranks.mean()
+                denom = np.linalg.norm(ref_centered) * np.linalg.norm(got_centered)
+                spearman = float(np.dot(ref_centered, got_centered) / denom) if denom > 0 else 1.0
+            else:
+                spearman = 1.0
+            spearman_values.append(spearman)
+
+        recall_at_k = float(np.mean(recall_at_k_hits))
+        mrr = float(np.mean(reciprocal_ranks))
+        spearman_mean = float(np.mean(spearman_values))
+        spearman_min = float(np.min(spearman_values))
     else:
         pairwise_pearson = 1.0
         nn_top1_acc = 1.0
         topk_overlap = 1.0
+        recall_at_1 = 1.0
+        recall_at_k = 1.0
+        mrr = 1.0
+        spearman_mean = 1.0
+        spearman_min = 1.0
 
     print()
     print(
@@ -479,6 +527,14 @@ def main() -> int:
         f"pairwise_pearson={pairwise_pearson:.9f} "
         f"nn_top1_acc={nn_top1_acc:.9f} "
         f"top{min(3, max(1, len(labels) - 1))}_overlap={topk_overlap:.9f}"
+    )
+    print(
+        "retrieval_metrics: "
+        f"spearman_mean={spearman_mean:.9f} "
+        f"spearman_min={spearman_min:.9f} "
+        f"recall_at_1={recall_at_1:.9f} "
+        f"recall_at_{min(3, max(1, len(labels) - 1))}={recall_at_k:.9f} "
+        f"mrr={mrr:.9f}"
     )
 
     if pairwise_max > args.max_pairwise_diff:
