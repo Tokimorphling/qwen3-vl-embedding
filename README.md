@@ -1,6 +1,8 @@
 # Qwen3-VL-Embedding on llama.cpp
 
-这个仓库用于把 `Qwen3-VL-Embedding-2B` 转成 `llama.cpp` 可用的 GGUF，并用本地修改版 `llama.cpp` 复现官方 Python / Hugging Face 的 embedding 行为。
+English version: [README.en.md](README.en.md)
+
+这个仓库用于把 `Qwen3-VL-Embedding` 模型转成 `llama.cpp` 可用的 GGUF，并用本地修改版 `llama.cpp` 复现官方 Python / Hugging Face 的 embedding 行为。
 
 当前结论：
 
@@ -8,6 +10,8 @@
 - 推荐部署配置是 `F16 + mmproj-f16`。
 - 已有固定回归脚本，可直接对比 Python 参考实现和 `llama-vl-embedding`。
 - 回归支持两种判定模式：`strict` 看数值贴合，`retrieval` 看检索排序一致性。
+- 一键脚本支持主模型和 `mmproj` 分开精度、主模型 `Q8_0`、全精度 sweep，以及把详细结果写进文件。
+- 当前默认 fixture 只有 5 条样例，`retrieval` 模式更适合作为 smoke test / sanity check，不应直接替代大规模检索评测。
 
 仓库本身只跟踪代码、脚本和文档；模型权重、GGUF、日志和本地实验文件不纳入版本库。
 
@@ -139,6 +143,8 @@ python -m pip install -r ./llama.cpp/requirements/requirements-convert_hf_to_ggu
 
 如果输出文件已经存在，它会跳过重复转换；如果你要强制重转，传 `--force-convert`。
 
+如果你传了 `--results-file`，详细回归输出和 `suite_summary` 会写进文件；终端只保留每个 variant 的精简摘要。
+
 ## 3. 一键脚本参数
 
 ```bash
@@ -180,6 +186,7 @@ python -m pip install -r ./llama.cpp/requirements/requirements-convert_hf_to_ggu
 - 如果传了 `--results-file`，终端会只保留精简摘要，完整回归输出会写进文件，适合长时间 sweep。
 - 做“精度 sweep”时，建议把 `--python-torch-dtype` 固定住，而不是用 `auto`。否则不同机器上 Python 参考可能会在 `bf16/float16/float32` 之间变化，导致你很难判断差异到底来自 `llama.cpp` 还是参考实现本身。
 - 如果你的目标是模拟 A100 上的默认部署行为，`--python-torch-dtype bfloat16` 或 `auto` 都可以；如果你的目标是做 apples-to-apples 的数值比较，建议显式用 `float32` 对 `f32`，用 `float16` 对 `f16/Q8_0`。
+- `retrieval` 模式通过，只能说明当前小样本上的排序结构没有明显坏掉；不代表逐元素数值已经对齐，也不代表大规模检索数据集一定等价。
 
 ## 4. 手工转换
 
@@ -325,6 +332,12 @@ python ./scripts/check_qwen3_vl_embedding_regression.py \
 - retrieval metrics: `spearman_mean`、`spearman_min`、`Recall@1`、`Recall@K`、`MRR`
 - Python 与 `llama-vl-embedding` 的 load / run / total timing
 
+建议这样理解结果：
+
+- `strict = OK`：数值层面也比较接近，适合做高精度回归。
+- `retrieval = OK`：当前样例上的排序一致性足够好，但仍应结合更大的评测集再做最终判断。
+- 当前固定 fixture 只有 5 条样例，`Recall@1/MRR = 1.0` 的解释力度有限，更适合作为日常 smoke test。
+
 ## 6. 为什么当前改动版更接近官方实现
 
 这里区分两种“接近”：
@@ -436,6 +449,7 @@ cmake --build ./llama.cpp/build --target llama-quantize -j
 - 要正式替代 PyTorch 跑 embedding：优先 `F16 + mmproj-f16`
 - 要留一份高精度 baseline：再保留一份 `F32`
 - 要极限速度：再考虑 `Q8_0`
+- `Q8_0` 如果只过了 `retrieval`、没过 `strict`，更适合作为 speed-oriented 选项，而不是默认精度配置。
 
 ## 11. 相关代码
 
