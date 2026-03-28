@@ -103,6 +103,12 @@ def parse_args() -> argparse.Namespace:
         help="Optional torch_dtype override for the Python reference model.",
     )
     parser.add_argument(
+        "--regression-mode",
+        choices=("strict", "retrieval"),
+        default="strict",
+        help="strict checks numerical similarity; retrieval checks ranking consistency.",
+    )
+    parser.add_argument(
         "--cuda-visible-devices",
         default=None,
         help="Override CUDA_VISIBLE_DEVICES before loading the Python reference or launching llama-vl-embedding.",
@@ -140,6 +146,36 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=2e-3,
         help="Maximum absolute difference between pairwise similarity matrices.",
+    )
+    parser.add_argument(
+        "--min-pairwise-pearson",
+        type=float,
+        default=0.999,
+        help="Minimum pairwise similarity Pearson correlation in retrieval mode.",
+    )
+    parser.add_argument(
+        "--min-spearman-mean",
+        type=float,
+        default=0.999,
+        help="Minimum mean Spearman rank correlation in retrieval mode.",
+    )
+    parser.add_argument(
+        "--min-recall-at-1",
+        type=float,
+        default=0.99,
+        help="Minimum Recall@1 in retrieval mode.",
+    )
+    parser.add_argument(
+        "--min-recall-at-k",
+        type=float,
+        default=0.99,
+        help="Minimum Recall@K in retrieval mode.",
+    )
+    parser.add_argument(
+        "--min-mrr",
+        type=float,
+        default=0.99,
+        help="Minimum MRR in retrieval mode.",
     )
     return parser.parse_args()
 
@@ -412,6 +448,7 @@ def main() -> int:
 
     print(f"inputs_file: {args.inputs_file}")
     print(f"samples: {len(labels)}")
+    print(f"regression_mode: {args.regression_mode}")
     print(
         f"cuda_visible_devices: {os.environ.get('CUDA_VISIBLE_DEVICES', '')!r} "
         f"python_device_request={args.python_device} "
@@ -436,12 +473,13 @@ def main() -> int:
             f"max_abs_diff={max_abs_diff:.9f}"
         )
 
-        if cos < args.min_cosine:
-            failed = True
-        if mean_abs_diff > args.max_mean_abs_diff:
-            failed = True
-        if max_abs_diff > args.max_abs_diff:
-            failed = True
+        if args.regression_mode == "strict":
+            if cos < args.min_cosine:
+                failed = True
+            if mean_abs_diff > args.max_mean_abs_diff:
+                failed = True
+            if max_abs_diff > args.max_abs_diff:
+                failed = True
 
     ref_sim = ref @ ref.T
     got_sim = got @ got.T
@@ -522,23 +560,37 @@ def main() -> int:
         f"max_abs_diff={pairwise_max:.9f} "
         f"mean_abs_diff={pairwise_mean:.9f}"
     )
+    topk_label = min(3, max(1, len(labels) - 1))
+
     print(
         "retrieval_consistency: "
         f"pairwise_pearson={pairwise_pearson:.9f} "
         f"nn_top1_acc={nn_top1_acc:.9f} "
-        f"top{min(3, max(1, len(labels) - 1))}_overlap={topk_overlap:.9f}"
+        f"top{topk_label}_overlap={topk_overlap:.9f}"
     )
     print(
         "retrieval_metrics: "
         f"spearman_mean={spearman_mean:.9f} "
         f"spearman_min={spearman_min:.9f} "
         f"recall_at_1={recall_at_1:.9f} "
-        f"recall_at_{min(3, max(1, len(labels) - 1))}={recall_at_k:.9f} "
+        f"recall_at_{topk_label}={recall_at_k:.9f} "
         f"mrr={mrr:.9f}"
     )
 
-    if pairwise_max > args.max_pairwise_diff:
-        failed = True
+    if args.regression_mode == "strict":
+        if pairwise_max > args.max_pairwise_diff:
+            failed = True
+    else:
+        if pairwise_pearson < args.min_pairwise_pearson:
+            failed = True
+        if spearman_mean < args.min_spearman_mean:
+            failed = True
+        if recall_at_1 < args.min_recall_at_1:
+            failed = True
+        if recall_at_k < args.min_recall_at_k:
+            failed = True
+        if mrr < args.min_mrr:
+            failed = True
 
     if failed:
         print()
