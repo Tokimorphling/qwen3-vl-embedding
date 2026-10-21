@@ -1,66 +1,64 @@
 # Qwen3-VL-Embedding on llama.cpp
 
-English version: [README.en.md](README.en.md)
+This repository converts `Qwen3-VL-Embedding` models into GGUF files usable by `llama.cpp`, and uses a locally patched `llama.cpp` to reproduce the official Python / Hugging Face embedding behavior.
 
-这个仓库用于把 `Qwen3-VL-Embedding` 模型转成 `llama.cpp` 可用的 GGUF，并用本地修改版 `llama.cpp` 复现官方 Python / Hugging Face 的 embedding 行为。
+Current conclusions:
 
-当前结论：
+- For the already validated `text`, `image`, and `image + text` inputs, the current locally patched `llama.cpp` is closer to the official behavior than clean upstream.
+- The recommended deployment configuration is `F16 + mmproj-f16`.
+- A fixed regression script is included, so the Python reference implementation and `llama-vl-embedding` can be compared directly.
+- Regression supports two decision modes: `strict` looks at numeric closeness, `retrieval` looks at retrieval ranking consistency.
+- The one-shot script supports separate precision for the main model and `mmproj`, `Q8_0` for the main model, a full-precision sweep, and writing detailed results to a file.
+- The current default fixture only has 5 samples, so `retrieval` mode is better treated as a smoke test / sanity check and should not directly replace large-scale retrieval evaluation.
 
-- 对已经验证过的 `text`、`image`、`image + text` 输入，当前本地改动版 `llama.cpp` 比 clean upstream 更接近官方行为。
-- 推荐部署配置是 `F16 + mmproj-f16`。
-- 已有固定回归脚本，可直接对比 Python 参考实现和 `llama-vl-embedding`。
-- 回归支持两种判定模式：`strict` 看数值贴合，`retrieval` 看检索排序一致性。
-- 一键脚本支持主模型和 `mmproj` 分开精度、主模型 `Q8_0`、全精度 sweep，以及把详细结果写进文件。
-- 当前默认 fixture 只有 5 条样例，`retrieval` 模式更适合作为 smoke test / sanity check，不应直接替代大规模检索评测。
-
-仓库本身只跟踪代码、脚本和文档；模型权重、GGUF、日志和本地实验文件不纳入版本库。
+The repository itself only tracks code, scripts, and documentation; model weights, GGUF files, logs, and local experiment artifacts are not included in version control.
 
 ## 0. Clone
 
-本仓库使用 submodule 记录依赖仓库：
+This repository uses submodules to track dependency repositories:
 
 - `llama.cpp`
 - `Qwen3-VL-Embedding`
 
-首次拉取建议直接用：
+For the first checkout, it is recommended to use:
 
 ```bash
 git clone --recursive <this-repo-url>
 ```
 
-如果已经 clone 过，再执行：
+If you have already cloned it, run:
 
 ```bash
 git submodule update --init --recursive
 ```
 
-## 1. 目录约定
+## 1. Directory Layout
 
-下面的相对路径都以仓库根目录为准：
+All relative paths below are relative to the repository root:
 
-- `./llama.cpp`: 本地修改版 `llama.cpp` submodule
-- `./Qwen3-VL-Embedding`: 官方 Python 参考实现 submodule
-- `./models/Qwen3-VL-Embedding-2B`: 本地 Hugging Face 模型目录
-- `./scripts/check_qwen3_vl_embedding_regression.py`: Python vs `llama-vl-embedding` 回归脚本
-- `./scripts/data/qwen3_vl_embedding_regression_inputs.json`: 固定回归样例
-- `./scripts/convert_and_regress_qwen3_vl_embedding.sh`: 一键构建、转换、回归入口
+- `./llama.cpp`: the locally patched `llama.cpp` submodule
+- `./Qwen3-VL-Embedding`: the official Python reference implementation submodule
+- `./models/Qwen3-VL-Embedding-2B`: local Hugging Face model directory
+- `./scripts/check_qwen3_vl_embedding_regression.py`: Python vs `llama-vl-embedding` regression script
+- `./scripts/data/qwen3_vl_embedding_regression_inputs.json`: fixed regression fixture
+- `./scripts/convert_and_regress_qwen3_vl_embedding.sh`: one-shot build, convert, and regression entrypoint
 
-## 2. 快速开始
+## 2. Quick Start
 
-先进入你已经准备好的 Python 环境：
+First activate the Python environment you have already prepared:
 
 ```bash
 conda activate base
 cd /path/to/qwen3vl-embedding
 ```
 
-安装一次转换依赖：
+Install the conversion dependencies once:
 
 ```bash
 python -m pip install -r ./llama.cpp/requirements/requirements-convert_hf_to_gguf.txt
 ```
 
-如果你机器上有 CUDA，并希望直接跑 GPU 回归：
+If your machine has CUDA and you want to run GPU regression directly:
 
 ```bash
 ./scripts/convert_and_regress_qwen3_vl_embedding.sh \
@@ -69,7 +67,7 @@ python -m pip install -r ./llama.cpp/requirements/requirements-convert_hf_to_ggu
   --cuda-visible-devices 0
 ```
 
-如果你更关心检索排序而不是逐元素数值一致，可以改用 `retrieval` 模式：
+If you care more about retrieval ranking than elementwise numeric agreement, you can switch to `retrieval` mode:
 
 ```bash
 ./scripts/convert_and_regress_qwen3_vl_embedding.sh \
@@ -79,7 +77,7 @@ python -m pip install -r ./llama.cpp/requirements/requirements-convert_hf_to_ggu
   --regression-mode retrieval
 ```
 
-如果你想直接测 `INT8/Q8_0` 主模型，并保留 `mmproj-f16`：
+If you want to test an `INT8/Q8_0` main model directly while keeping `mmproj-f16`:
 
 ```bash
 ./scripts/convert_and_regress_qwen3_vl_embedding.sh \
@@ -93,7 +91,7 @@ python -m pip install -r ./llama.cpp/requirements/requirements-convert_hf_to_ggu
   --regression-mode retrieval
 ```
 
-如果你想把主模型和 `mmproj` 精度分开，例如 `F32 + mmproj-f16`：
+If you want to set the main model and `mmproj` precision separately, for example `F32 + mmproj-f16`:
 
 ```bash
 ./scripts/convert_and_regress_qwen3_vl_embedding.sh \
@@ -105,7 +103,7 @@ python -m pip install -r ./llama.cpp/requirements/requirements-convert_hf_to_ggu
   --cuda-visible-devices 0
 ```
 
-如果你想一次把 `llama.cpp` 侧常用精度都跑一遍：
+If you want to run through all the common `llama.cpp` precision variants in one go:
 
 ```bash
 ./scripts/convert_and_regress_qwen3_vl_embedding.sh \
@@ -118,14 +116,14 @@ python -m pip install -r ./llama.cpp/requirements/requirements-convert_hf_to_ggu
   --run-all-precisions
 ```
 
-这个 sweep 会依次跑：
+This sweep runs, in order:
 
 - `f32 + mmproj-f32`
 - `bf16 + mmproj-bf16`
 - `f16 + mmproj-f16`
 - `Q8_0(main) + mmproj-f16`
 
-如果你只想走 CPU：
+If you only want to use the CPU:
 
 ```bash
 ./scripts/convert_and_regress_qwen3_vl_embedding.sh \
@@ -134,65 +132,65 @@ python -m pip install -r ./llama.cpp/requirements/requirements-convert_hf_to_ggu
   --llama-ngl 0
 ```
 
-这个脚本默认会：
+By default, this script will:
 
-1. 编译 `llama-vl-embedding`
-2. 生成 `Qwen3-VL-Embedding-2B-f16.gguf`
-3. 生成 `mmproj-Qwen3-VL-Embedding-2B-f16.gguf`
-4. 用固定样例跑 Python vs `llama-vl-embedding` 回归
+1. build `llama-vl-embedding`
+2. generate `Qwen3-VL-Embedding-2B-f16.gguf`
+3. generate `mmproj-Qwen3-VL-Embedding-2B-f16.gguf`
+4. run the Python vs `llama-vl-embedding` regression on the fixed fixture
 
-如果输出文件已经存在，它会跳过重复转换；如果你要强制重转，传 `--force-convert`。
+If the output files already exist, it skips the repeated conversion; if you want to force reconversion, pass `--force-convert`.
 
-如果你传了 `--results-file`，详细回归输出和 `suite_summary` 会写进文件；终端只保留每个 variant 的精简摘要。
+If you pass `--results-file`, the detailed regression output and `suite_summary` are written to the file, while the terminal keeps only a compact summary for each variant.
 
-## 3. 一键脚本参数
+## 3. One-Shot Script Arguments
 
 ```bash
 ./scripts/convert_and_regress_qwen3_vl_embedding.sh --help
 ```
 
-常用参数：
+Common arguments:
 
-- `--model-dir PATH`: HF 模型目录
-- `--outtype f16|bf16|f32`: 主模型和 `mmproj` 的统一快捷精度，默认 `f16`
-- `--model-outtype f16|bf16|f32`: 单独指定主模型 GGUF 精度
-- `--mmproj-outtype f16|bf16|f32`: 单独指定 `mmproj` GGUF 精度
-- `--model-quant-type none|int8|Q8_0`: 主模型可选后量化；`int8` 会映射到 `Q8_0`
-- `--python-device auto|cpu|cuda`: Python 参考实现设备选择
-- `--python-torch-dtype auto|float32|float16|bfloat16`: Python 参考实现的 `torch_dtype`
-- `--cuda-visible-devices VALUE`: 显式指定 GPU
-- `--llama-ngl VALUE`: 传给 `llama-vl-embedding` 的 `-ngl`
-- `--llama-no-mmproj-offload`: 禁用 `mmproj` GPU offload
-- `--regression-mode strict|retrieval`: 回归判定模式，默认 `strict`
-- `--run-all-precisions`: 依次跑 `f32`、`bf16`、`f16`、`Q8_0(main)+mmproj-f16`
-- `--results-file PATH`: 把详细回归输出和 sweep 汇总追加写入文件
-- `--cuda-build auto|on|off`: 是否在构建阶段显式设置 `GGML_CUDA`
-- `--force-convert`: 即使目标 GGUF 已存在也重新转换
-- `--rebuild`: 强制重新构建 `llama-vl-embedding`
-- `--skip-build`: 跳过编译
-- `--skip-regression`: 只做转换，不跑回归
-- `--install-convert-deps`: 脚本内部执行一次 `pip install -r ...`
+- `--model-dir PATH`: HF model directory
+- `--outtype f16|bf16|f32`: shorthand precision for both the main model and `mmproj`, defaults to `f16`
+- `--model-outtype f16|bf16|f32`: precision for the main model GGUF only
+- `--mmproj-outtype f16|bf16|f32`: precision for the `mmproj` GGUF only
+- `--model-quant-type none|int8|Q8_0`: optional post-quantization for the main model; `int8` maps to `Q8_0`
+- `--python-device auto|cpu|cuda`: device selection for the Python reference implementation
+- `--python-torch-dtype auto|float32|float16|bfloat16`: `torch_dtype` for the Python reference implementation
+- `--cuda-visible-devices VALUE`: explicitly select the GPU
+- `--llama-ngl VALUE`: `-ngl` passed to `llama-vl-embedding`
+- `--llama-no-mmproj-offload`: disable `mmproj` GPU offload
+- `--regression-mode strict|retrieval`: regression decision mode, defaults to `strict`
+- `--run-all-precisions`: run `f32`, `bf16`, `f16`, and `Q8_0(main)+mmproj-f16` in sequence
+- `--results-file PATH`: append detailed regression output and the sweep summary to a file
+- `--cuda-build auto|on|off`: whether to explicitly set `GGML_CUDA` during the build
+- `--force-convert`: reconvert even if the target GGUF already exists
+- `--rebuild`: force a rebuild of `llama-vl-embedding`
+- `--skip-build`: skip compilation
+- `--skip-regression`: convert only, do not run regression
+- `--install-convert-deps`: run `pip install -r ...` once inside the script
 
-说明：
+Notes:
 
-- 当前脚本的“GPU 模式”不只影响运行，也可以影响构建。
-- `--cuda-build auto` 时，如果 `--python-device cuda` 或 `--llama-ngl` 不是 `0`，脚本会在配置阶段传 `-DGGML_CUDA=ON`。
-- 如果你想强制 CPU 构建，可以显式传 `--cuda-build off`。
-- 如果现有 `build/` 目录里的 `GGML_CUDA` 配置和当前模式不一致，脚本会自动重新配置并重编，不会盲目复用旧二进制。
-- `--outtype` 是快捷写法；如果同时传了 `--model-outtype` 或 `--mmproj-outtype`，会以分开指定的参数为准。
-- 量化只对主模型做，`mmproj` 仍建议保留 `f16` 或 `f32`。
-- `strict` 模式沿用原来的数值阈值，适合做 2B 这类已高度对齐的精确回归。
-- `retrieval` 模式主要看 `pairwise_pearson`、`Spearman`、`Recall@K`、`MRR`，更适合像 8B 这种排序稳定但逐元素仍有小残差的场景。
-- 如果传了 `--results-file`，终端会只保留精简摘要，完整回归输出会写进文件，适合长时间 sweep。
-- 做“精度 sweep”时，建议把 `--python-torch-dtype` 固定住，而不是用 `auto`。否则不同机器上 Python 参考可能会在 `bf16/float16/float32` 之间变化，导致你很难判断差异到底来自 `llama.cpp` 还是参考实现本身。
-- 如果你的目标是模拟 A100 上的默认部署行为，`--python-torch-dtype bfloat16` 或 `auto` 都可以；如果你的目标是做 apples-to-apples 的数值比较，建议显式用 `float32` 对 `f32`，用 `float16` 对 `f16/Q8_0`。
-- `retrieval` 模式通过，只能说明当前小样本上的排序结构没有明显坏掉；不代表逐元素数值已经对齐，也不代表大规模检索数据集一定等价。
+- The "GPU mode" of the current script affects not only runtime, but also the build.
+- With `--cuda-build auto`, if `--python-device cuda` is set or `--llama-ngl` is not `0`, the script passes `-DGGML_CUDA=ON` at configure time.
+- If you want to force a CPU build, you can explicitly pass `--cuda-build off`.
+- If the `GGML_CUDA` configuration in an existing `build/` directory does not match the current mode, the script reconfigures and rebuilds automatically instead of blindly reusing the old binaries.
+- `--outtype` is a shorthand; if you also pass `--model-outtype` or `--mmproj-outtype`, the separately specified arguments take precedence.
+- Quantization is applied only to the main model; keeping `mmproj` at `f16` or `f32` is still recommended.
+- `strict` mode keeps the original numeric thresholds and is suitable for precise regression on already well-aligned cases such as 2B.
+- `retrieval` mode mainly looks at `pairwise_pearson`, `Spearman`, `Recall@K`, and `MRR`, and is more suitable for cases like 8B where ranking is stable but small elementwise residuals still remain.
+- If `--results-file` is passed, the terminal keeps only a compact summary and the full regression output is written to the file, which is convenient for long sweeps.
+- When doing a "precision sweep", it is recommended to pin `--python-torch-dtype` instead of using `auto`. Otherwise the Python reference may vary between `bf16/float16/float32` on different machines, making it hard to tell whether a difference comes from `llama.cpp` or from the reference implementation itself.
+- If your goal is to mimic the default deployment behavior on an A100, either `--python-torch-dtype bfloat16` or `auto` will do; if your goal is an apples-to-apples numeric comparison, it is recommended to explicitly use `float32` against `f32`, and `float16` against `f16/Q8_0`.
+- A passing `retrieval` result only means the ranking structure on the current small sample has not obviously broken; it does not mean elementwise numerics are aligned, nor does it guarantee equivalence on a large-scale retrieval dataset.
 
-## 4. 手工转换
+## 4. Manual Conversion
 
-如果你不想走一键脚本，也可以手工执行。
+If you do not want to use the one-shot script, you can also do it manually.
 
-### 4.1 转主模型
+### 4.1 Convert the main model
 
 ```bash
 cd ./llama.cpp
@@ -203,7 +201,7 @@ python ./convert_hf_to_gguf.py \
   --outtype f16
 ```
 
-如果你想生成 `bf16`：
+If you want to generate `bf16`:
 
 ```bash
 python ./convert_hf_to_gguf.py \
@@ -212,7 +210,7 @@ python ./convert_hf_to_gguf.py \
   --outtype bf16
 ```
 
-### 4.2 转 mmproj
+### 4.2 Convert mmproj
 
 ```bash
 python ./convert_hf_to_gguf.py \
@@ -222,7 +220,7 @@ python ./convert_hf_to_gguf.py \
   --mmproj
 ```
 
-`bf16` 版本：
+The `bf16` version:
 
 ```bash
 python ./convert_hf_to_gguf.py \
@@ -232,16 +230,16 @@ python ./convert_hf_to_gguf.py \
   --mmproj
 ```
 
-### 4.3 编译
+### 4.3 Build
 
 ```bash
 cmake -S ./llama.cpp -B ./llama.cpp/build
 cmake --build ./llama.cpp/build --target llama-vl-embedding -j
 ```
 
-### 4.4 运行
+### 4.4 Run
 
-纯文本：
+Text only:
 
 ```bash
 ./llama.cpp/build/bin/llama-vl-embedding \
@@ -253,7 +251,7 @@ cmake --build ./llama.cpp/build --target llama-vl-embedding -j
   -c 4096
 ```
 
-图文：
+Image + text:
 
 ```bash
 ./llama.cpp/build/bin/llama-vl-embedding \
@@ -267,17 +265,17 @@ cmake --build ./llama.cpp/build --target llama-vl-embedding -j
   -ngl auto
 ```
 
-## 5. 回归脚本
+## 5. Regression Script
 
-固定回归脚本位于：
+The fixed regression script is located at:
 
 - [`scripts/check_qwen3_vl_embedding_regression.py`](scripts/check_qwen3_vl_embedding_regression.py)
 
-默认固定样例位于：
+The default fixed fixture is located at:
 
 - [`scripts/data/qwen3_vl_embedding_regression_inputs.json`](scripts/data/qwen3_vl_embedding_regression_inputs.json)
 
-直接跑推荐配置：
+Run the recommended configuration directly:
 
 ```bash
 python ./scripts/check_qwen3_vl_embedding_regression.py \
@@ -288,7 +286,7 @@ python ./scripts/check_qwen3_vl_embedding_regression.py \
   --llama-ngl auto
 ```
 
-如果你想在 A100 上做更公平的 8B 对照，建议显式固定 Python 参考 dtype：
+If you want a fairer 8B comparison on an A100, it is recommended to explicitly pin the Python reference dtype:
 
 ```bash
 python ./scripts/check_qwen3_vl_embedding_regression.py \
@@ -301,7 +299,7 @@ python ./scripts/check_qwen3_vl_embedding_regression.py \
   --cuda-visible-devices 0
 ```
 
-如果你更关心检索排序一致性，可以直接切到 `retrieval` 模式：
+If you care more about retrieval ranking consistency, you can switch directly to `retrieval` mode:
 
 ```bash
 python ./scripts/check_qwen3_vl_embedding_regression.py \
@@ -315,7 +313,7 @@ python ./scripts/check_qwen3_vl_embedding_regression.py \
   --regression-mode retrieval
 ```
 
-如果你想稳定做 CPU 数值回归：
+If you want stable CPU numeric regression:
 
 ```bash
 python ./scripts/check_qwen3_vl_embedding_regression.py \
@@ -323,30 +321,30 @@ python ./scripts/check_qwen3_vl_embedding_regression.py \
   --llama-ngl 0
 ```
 
-它会输出：
+It reports:
 
-- 每条样例的 cosine similarity
+- cosine similarity for each sample
 - mean / max absolute diff
-- pairwise similarity matrix 的最大差值
-- retrieval consistency: `pairwise_pearson`、`nn_top1_acc`、`topK_overlap`
-- retrieval metrics: `spearman_mean`、`spearman_min`、`Recall@1`、`Recall@K`、`MRR`
-- Python 与 `llama-vl-embedding` 的 load / run / total timing
+- max difference of the pairwise similarity matrix
+- retrieval consistency: `pairwise_pearson`, `nn_top1_acc`, `topK_overlap`
+- retrieval metrics: `spearman_mean`, `spearman_min`, `Recall@1`, `Recall@K`, `MRR`
+- load / run / total timing for Python and `llama-vl-embedding`
 
-建议这样理解结果：
+It is recommended to interpret the results as follows:
 
-- `strict = OK`：数值层面也比较接近，适合做高精度回归。
-- `retrieval = OK`：当前样例上的排序一致性足够好，但仍应结合更大的评测集再做最终判断。
-- 当前固定 fixture 只有 5 条样例，`Recall@1/MRR = 1.0` 的解释力度有限，更适合作为日常 smoke test。
+- `strict = OK`: the numerics are also reasonably close, suitable for high-precision regression.
+- `retrieval = OK`: ranking consistency on the current samples is good enough, but a final judgment should still combine a larger evaluation set.
+- The current fixed fixture only has 5 samples, so the explanatory power of `Recall@1/MRR = 1.0` is limited; it is better treated as a daily smoke test.
 
-## 6. Ablation：只有 `vl-embedding` 前端还不够
+## 6. Ablation: The `vl-embedding` Frontend Alone Is Not Enough
 
-为了验证后续 `Qwen3-VL` 适配提交是不是“必须的”，可以直接拿只包含前端提交 `e60684b` 的版本做对照。
+To verify whether the later `Qwen3-VL` adaptation commits are actually "necessary", you can compare directly against a version containing only the frontend commit `e60684b`.
 
-下面这组命令会：
+The following set of commands will:
 
-1. 在临时 worktree 检出 `e60684b`
-2. 用 `-j4` 编译 `llama-vl-embedding`
-3. 对同一套 `2B + f32 + python float32 + strict` 样例跑回归
+1. check out `e60684b` in a temporary worktree
+2. build `llama-vl-embedding` with `-j4`
+3. run regression on the same `2B + f32 + python float32 + strict` samples
 
 ```bash
 git -C ./llama.cpp worktree add /tmp/llama.cpp-vl-only-test e60684b
@@ -367,13 +365,13 @@ python ./scripts/check_qwen3_vl_embedding_regression.py \
   --cuda-visible-devices 0
 ```
 
-实际结果：
+Actual results:
 
-- 文本三条几乎不变：
+- the three text samples are essentially unchanged:
   - `text_query cosine = 0.999999285`
   - `text_doc cosine = 0.999999642`
   - `text_concat cosine = 0.999999940`
-- 图像路径明显退化：
+- the image path degrades significantly:
   - `image_only cosine = 0.969332635`
   - `image_text cosine = 0.988328397`
   - `pairwise_similarity max_abs_diff = 0.047971517`
@@ -381,81 +379,81 @@ python ./scripts/check_qwen3_vl_embedding_regression.py \
   - `recall_at_1 = 0.8`
   - `regression_check = FAILED`
 
-对比当前版：
+Compared with the current version:
 
-- 当前版同一套回归是 `regression_check = OK`
-- 当前版：
+- the same regression returns `regression_check = OK` on the current version
+- current version:
   - `image_only cosine = 0.999910116`
   - `image_text cosine = 0.999916017`
   - `pairwise_similarity max_abs_diff = 0.000650585`
 
-这个 ablation 说明：
+This ablation shows:
 
-- `e60684b` 主要解决的是 CLI / 前端入口
-- 仅有 `vl-embedding` 前端并不能把 Qwen3-VL 的图像路径对齐到官方实现
-- 真正把多模态结果拉近 HF 的，是后续 `d37dfa2`、`646165f`，以及之后的 resize follow-up fix
+- `e60684b` mainly solves the CLI / frontend entry point
+- the `vl-embedding` frontend alone cannot align the Qwen3-VL image path with the official implementation
+- what actually brings the multimodal results closer to HF is the later `d37dfa2`, `646165f`, and the subsequent resize follow-up fix
 
-## 7. 为什么当前改动版更接近官方实现
+## 7. Why the Current Patched Version Is Closer to the Official Implementation
 
-这里区分两种“接近”：
+Two different meanings of "close" are distinguished here:
 
-- 行为接近：同样输入下，输出更接近官方 Python / HF
-- 代码接近：代码组织方式更像 HF 源码
+- behaviorally close: for the same inputs, the outputs are closer to official Python / HF
+- code-wise close: the code is organized more like the HF source
 
-当前这套本地改动主要提升的是“行为接近”。
+The current set of local patches mainly improves "behavioral closeness".
 
-关键点：
+Key points:
 
-- 绝对位置编码插值现在用 `qwen3vl_fast_pos_embed_interpolate()`，而不是通用 `resize_position_embeddings()`
-- 视觉 `RoPE` 和 `LayerNorm` 在 `Qwen3VL` 分支里做了更明确的显式处理
-- `QWEN3VL` 图像 resize 走更接近 Pillow 的 bicubic 路径
-- `vl-embedding` 输入格式已对齐官方 Python 的数组输入风格
+- absolute position embedding interpolation now uses `qwen3vl_fast_pos_embed_interpolate()` instead of the generic `resize_position_embeddings()`
+- visual `RoPE` and `LayerNorm` are handled more explicitly in the `Qwen3VL` branch
+- `QWEN3VL` image resize follows a bicubic path that is closer to Pillow
+- the `vl-embedding` input format now matches the array-style input of the official Python implementation
 
-反过来说，patch embedding 主干并没有被强行全面重写，因为 upstream 的稳定 patch conv 路径对单图输入本来就基本等价。
+Conversely, the patch embedding backbone was not forcibly rewritten in full, because the stable patch conv path in upstream is already basically equivalent for single-image inputs.
 
-## 8. 已验证的对齐结果
+## 8. Verified Alignment Results
 
-当前版本里，`vl-embedding` 与官方 Python / HF 参考实现已经在这些输入上做过对齐：
+In the current version, `vl-embedding` has been aligned with the official Python / HF reference implementation on these inputs:
 
 - `text`
 - `image`
 - `image + text`
 
-当前固定回归样例上的典型结果：
+Typical results on the current fixed regression fixture:
 
-- `text_query` cosine 约 `0.999999`
-- `text_doc` cosine 约 `0.999999`
-- `image_only` cosine 约 `0.99991`
-- `image_text` cosine 约 `0.99991`
+- `text_query` cosine about `0.999999`
+- `text_doc` cosine about `0.999999`
+- `image_only` cosine about `0.99991`
+- `image_text` cosine about `0.99991`
 
-这说明在已经验证过的路径上，当前版本比 clean upstream 更接近官方行为。
+This shows that on the already validated paths, the current version is closer to the official behavior than clean upstream.
 
-边界也要明确：
+The boundaries should also be clear:
 
-- 这不代表和官方实现逐元素 bit-identical
-- 当前重点验证的是 `text`、`image`、`image + text`
-- 视频链路还没有做同等级别的完整验证
+- this does not mean bit-identical to the official implementation
+- the current focus of validation is `text`, `image`, and `image + text`
+- the video path has not yet been validated at the same level of completeness
 
-## 8. GPU vision 崩溃修复
+## 8. GPU Vision Crash Fix
 
-之前 `Qwen3-VL` 的视觉 CUDA offload 路径出现过 `signal 11`。根因不是通用 CUDA graph 问题，而是 host 侧直接读取了已经 offload 到 GPU backend 的 `position_embeddings`。
+Previously, the vision CUDA offload path of `Qwen3-VL` produced `signal 11`. The root cause was not a generic CUDA graph issue, but that host-side code directly read `position_embeddings` that had already been offloaded to the GPU backend.
 
-修复方式是：
+The fix is:
 
-- 先用 `ggml_backend_tensor_get()` 把 `position_embeddings` 拉回 host
-- 再在 host 上执行 `fast_pos_embed_interpolate`
+- first pull `position_embeddings` back to the host with `ggml_backend_tensor_get()`
+- then run `fast_pos_embed_interpolate` on the host
 
-当前版本已经修掉这个问题，`mmproj` 可以正常走 GPU offload；如果你还在旧 build 上看到图像一开始就崩，先重新编译。
+The current version has already fixed this problem, and `mmproj` can go through GPU offload normally; if you still see an immediate crash on images with an old build, rebuild first.
 
-## 9. 量化
+## 9. Quantization
 
-先编译量化工具：
+Build the quantization tool first:
 
 ```bash
 cmake --build ./llama.cpp/build --target llama-quantize -j
 ```
 
-再量化主模型，例如 `Q8_0`：
+Then quantize the main model, for example to `Q8_0`:
 
 ```bash
 ./llama.cpp/build/bin/llama-quantize \
@@ -464,13 +462,13 @@ cmake --build ./llama.cpp/build --target llama-quantize -j
   Q8_0
 ```
 
-对 embedding 用途的建议：
+Recommendations for embedding use:
 
-- 正式替代 PyTorch：优先 `F16 + mmproj-f16`
-- 保留最高数值基线：保留一份 `F32`
-- 追求极限速度：可以试 `Q8_0 + mmproj-f16`，但要接受精度退化
+- formally replacing PyTorch: prefer `F16 + mmproj-f16`
+- keeping the highest numeric baseline: keep a copy of `F32`
+- pursuing maximum speed: you can try `Q8_0 + mmproj-f16`, but you must accept accuracy degradation
 
-如果你走一键脚本，等价写法是：
+If you use the one-shot script, the equivalent form is:
 
 ```bash
 ./scripts/convert_and_regress_qwen3_vl_embedding.sh \
@@ -484,39 +482,39 @@ cmake --build ./llama.cpp/build --target llama-quantize -j
   --regression-mode retrieval
 ```
 
-## 10. 与 PyTorch 参考实现对比
+## 10. Comparison with the PyTorch Reference Implementation
 
-下面这组结果来自同一批固定 5 条样例、同一张 `RTX 2080 Ti`：
+The following results come from the same fixed 5 samples on the same `RTX 2080 Ti`:
 
-| 配置 | Python 参考实现 | llama.cpp | 一致性 |
+| Config | Python reference | llama.cpp | Alignment |
 |---|---:|---:|---|
-| `F32 + mmproj-f32` | load `10.283s`, run `0.963s`, total `11.246s` | load `16.159s`, prompt eval `2.160s`, total `17.515s`, wall `19.601s` | 回归通过 |
-| `F32 + mmproj-f16` | load `9.143s`, run `1.848s`, total `10.991s` | load `13.592s`, prompt eval `1.982s`, total `14.766s`, wall `17.093s` | 回归通过 |
-| `F16 + mmproj-f16` | load `9.546s`, run `0.926s`, total `10.472s` | load `7.300s`, prompt eval `0.377s`, total `7.566s`, wall `8.472s` | 回归通过 |
-| `Q8_0 + mmproj-f16` | load `5.639s`, run `0.962s`, total `6.601s` | load `3.907s`, prompt eval `0.326s`, total `4.177s`, wall `5.016s` | 回归失败 |
+| `F32 + mmproj-f32` | load `10.283s`, run `0.963s`, total `11.246s` | load `16.159s`, prompt eval `2.160s`, total `17.515s`, wall `19.601s` | regression passed |
+| `F32 + mmproj-f16` | load `9.143s`, run `1.848s`, total `10.991s` | load `13.592s`, prompt eval `1.982s`, total `14.766s`, wall `17.093s` | regression passed |
+| `F16 + mmproj-f16` | load `9.546s`, run `0.926s`, total `10.472s` | load `7.300s`, prompt eval `0.377s`, total `7.566s`, wall `8.472s` | regression passed |
+| `Q8_0 + mmproj-f16` | load `5.639s`, run `0.962s`, total `6.601s` | load `3.907s`, prompt eval `0.326s`, total `4.177s`, wall `5.016s` | regression failed |
 
-说明：
+Notes:
 
-- Python 参考模型的 HF 权重本身是 `bfloat16`
-- 所以最公平的运行时对比其实是 `PyTorch bf16` 对 `llama.cpp F16`
-- `F32` 更适合作为数值基线，而不是这张卡上的最佳速度配置
+- the HF weights of the Python reference model are themselves `bfloat16`
+- so the fairest runtime comparison is actually `PyTorch bf16` vs `llama.cpp F16`
+- `F32` is better used as a numeric baseline rather than the best speed configuration on this card
 
-当前推荐：
+Current recommendations:
 
-- 要正式替代 PyTorch 跑 embedding：优先 `F16 + mmproj-f16`
-- 要留一份高精度 baseline：再保留一份 `F32`
-- 要极限速度：再考虑 `Q8_0`
-- `Q8_0` 如果只过了 `retrieval`、没过 `strict`，更适合作为 speed-oriented 选项，而不是默认精度配置。
+- to formally replace PyTorch for running embeddings: prefer `F16 + mmproj-f16`
+- to keep a high-precision baseline: also keep a copy of `F32`
+- for maximum speed: consider `Q8_0` further
+- if `Q8_0` only passes `retrieval` and fails `strict`, it is better treated as a speed-oriented option rather than the default precision configuration.
 
-## 11. 相关代码
+## 11. Related Code
 
-核心文件：
+Core files:
 
 - [`llama.cpp/tools/mtmd/clip.cpp`](llama.cpp/tools/mtmd/clip.cpp)
 - [`llama.cpp/tools/mtmd/models/qwen3vl.cpp`](llama.cpp/tools/mtmd/models/qwen3vl.cpp)
 - [`llama.cpp/examples/embedding/vl-embedding.cpp`](llama.cpp/examples/embedding/vl-embedding.cpp)
 
-辅助脚本：
+Helper scripts:
 
 - [`scripts/check_qwen3_vl_embedding_regression.py`](scripts/check_qwen3_vl_embedding_regression.py)
 - [`scripts/convert_and_regress_qwen3_vl_embedding.sh`](scripts/convert_and_regress_qwen3_vl_embedding.sh)
